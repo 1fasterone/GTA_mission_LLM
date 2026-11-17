@@ -44,7 +44,19 @@ from src.unity_layout_archetype import (
     volume_height,
 )
 from src.unity_racetrack import compose_racetrack
-from src.unity_schema import CourseSpec, EntitySpec, RouteZoneSpec, UnitySchema, WorldSpec
+from src.unity_schema import (
+    CharacterSpec,
+    CourseSpec,
+    EntitySpec,
+    MissionObjective,
+    MissionSpec,
+    RouteZoneSpec,
+    SceneSpec,
+    StoryBeat,
+    UnitySchema,
+    UnityScript,
+    WorldSpec,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1343,3 +1355,446 @@ class TestFormationVsScenery:
         # a formation, even though every instance is functionally identical.
         e = EntitySpec(name="Coins", kind="prop", count=15, tag="Collectible")
         assert spatial_relationship_of(e) == "scenery_distributed"
+
+
+# ── Medium evidence is scoped to the player and the whole play space ────────
+
+def _neon_fugitive_schema() -> UnitySchema:
+    """A REAL schema-fill output, captured verbatim from the live E2E run of
+    prompts/neon_fugitive.txt (origin/main e7b11e0) that hard-failed
+    `[layout.strict] ... motion_axis='planar' + medium='water'`.
+
+    `locomotion='drive'`, eight scenes, and every water word in ONE of them:
+    FloodedSlums, "Waterlogged alleys with debris and submerged structures",
+    plus its SubmergedWalls entity and a flooded-zone water-plane mesh."""
+    return _load("neon_fugitive_flooded_district_llm.schema.json")
+
+
+def _scenes(schema: UnitySchema, specs: dict[str, str]) -> UnitySchema:
+    """Replace the schema's scenes with `specs` (name -> description)."""
+    schema.scenes = list(specs)
+    schema.scene_specs = [SceneSpec(name=n, description=d)
+                          for n, d in specs.items()]
+    return schema
+
+
+def _mission(i: int, title: str, objective: str) -> MissionSpec:
+    return MissionSpec(id=f"m{i}", title=title, objectives=[
+        MissionObjective(id=f"m{i}o0", description=objective, type="reach")])
+
+
+class TestMediumEvidenceScope:
+    """A strong medium word counts only where the prose is ABOUT the player's
+    body or the whole play space. One object's name, one district's dressing,
+    one mission of several, never moves the whole project into a medium its
+    `locomotion` denies — and prose that really is about the player still
+    does, so the skydiving schema with `locomotion` left at "walk" keeps its
+    corridor."""
+
+    def test_live_flooded_district_selects_arena_plane(self):
+        arch = select_archetype(_neon_fugitive_schema())
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "ArenaPlane", "planar", "ground"), arch.evidence
+
+    def test_live_flooded_district_why_names_the_scoping(self):
+        why = select_archetype(_neon_fugitive_schema()).evidence["medium"]
+        assert why.startswith("locomotion='drive' is a surface locomotion"), why
+        assert "not to the player's body or the whole play space" in why, why
+        assert "in scene 'FloodedSlums' (1 of 7 play scenes)" in why, why
+        assert "in entity 'SubmergedWalls'" in why, why
+
+    def test_live_fixture_still_carries_the_word_that_failed(self):
+        """Guards the regression subject itself: if the fixture stops saying
+        "submerged" in one scene of a driving game, the tests above pass for
+        the wrong reason."""
+        s = _neon_fugitive_schema()
+        flooded = next(spec for spec in s.scene_specs if spec.name == "FloodedSlums")
+        assert s.locomotion == "drive"
+        assert "submerged" in flooded.description.lower()
+        assert len(s.scene_specs) == 8
+
+    def test_live_flooded_district_lays_out_on_the_ground_plane(self):
+        s = _neon_fugitive_schema()
+        msgs = compute_layout(s)
+        assert msgs[0].startswith("Layout archetype ArenaPlane selected"), msgs[0]
+        assert "medium=ground" in msgs[0], msgs[0]
+
+    def test_live_flooded_district_selection_is_deterministic(self):
+        a, b = (select_archetype(_neon_fugitive_schema()),
+                select_archetype(_neon_fugitive_schema()))
+        assert (a.name, a.evidence) == (b.name, b.evidence)
+
+    @pytest.mark.parametrize("fixture", [
+        "dropzone_skydive.schema.json", "dropzone_arcade_llm.schema.json"])
+    @pytest.mark.parametrize("locomotion", ["walk", "drive"])
+    def test_skydiving_with_a_surface_locomotion_keeps_its_corridor(
+            self, fixture, locomotion):
+        """The case the strong tier was written for: `locomotion` left at a
+        surface default while the description, the player entity and the
+        player's controller all say skydiving. Scoping must not lose it."""
+        s = _load(fixture)
+        s.locomotion = locomotion
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("VerticalCorridor", "air"), arch.evidence
+        assert "in description" in arch.evidence["medium"], arch.evidence
+
+    def test_the_player_entity_alone_carries_the_medium(self):
+        s = _planar_schema()
+        s.description = "A stunt game over the depot yard."
+        player = _entity(s, "Player")
+        player.model_hint = "skydiver in a jumpsuit"
+        arch = select_archetype(s)
+        assert arch.medium == "air", arch.evidence
+        assert "player entity 'Player'" in arch.evidence["medium"], arch.evidence
+
+    def test_the_player_controller_script_carries_the_medium(self):
+        s = _planar_schema()
+        s.description = "A stunt game over the depot yard."
+        s.scripts = [UnityScript(name="PlayerController", type="player",
+                                 description="Freefall body-attitude control.")]
+        arch = select_archetype(s)
+        assert arch.medium == "air", arch.evidence
+        assert "player script 'PlayerController'" in arch.evidence["medium"]
+
+    def test_a_player_character_carries_the_medium(self):
+        s = _planar_schema()
+        s.description = "A stunt game over the depot yard."
+        s.characters = [CharacterSpec(id="c0", name="Skydiver Nova", role="player")]
+        assert select_archetype(s).medium == "air"
+
+    def test_a_non_player_character_does_not(self):
+        s = _planar_schema()
+        s.characters = [CharacterSpec(id="c0", name="Scuba Instructor", role="npc")]
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "in character 'Scuba Instructor'" in arch.evidence["medium"]
+
+    def test_object_names_never_carry_the_medium(self):
+        """A submerged pipe, a seabed mesh and an underwater audio cue are
+        objects; none of them says where the player is."""
+        s = _planar_schema()
+        s.entities.append(EntitySpec(name="SubmergedPipes", kind="prop", count=4,
+                                     model_hint="underwater pipe section"))
+        s.scripts = [UnityScript(name="ReefAmbience", type="custom",
+                                 description="Loops kelp and reef ambience.")]
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "in entity 'SubmergedPipes'" in arch.evidence["medium"]
+        assert "in script 'ReefAmbience'" in arch.evidence["medium"]
+
+    def test_one_scene_in_three_is_set_dressing(self):
+        s = _scenes(_planar_schema(), {
+            "MainMenu": "Title screen.",
+            "Depot": "Fenced rustbelt depot yard.",
+            "Harbor": "Rainy container harbor.",
+            "SunkenQuarter": "Underwater ruins of the old quarter.",
+        })
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "scene 'SunkenQuarter' (1 of 3 play scenes)" in arch.evidence["medium"]
+
+    def test_a_majority_of_scenes_is_the_play_space(self):
+        """Most play scenes underwater IS an underwater game. With a walking
+        locomotion and nothing saying the player swims or floats that is a
+        genuine conflict, so it abstains loudly — naming both sides — rather
+        than picking either silently."""
+        s = _scenes(_planar_schema(), {
+            "MainMenu": "Title screen.",
+            "ReefShelf": "Underwater reef shelf.",
+            "KelpForest": "Underwater kelp forest.",
+            "Depot": "Fenced depot yard.",
+        })
+        with pytest.raises(LayoutStrictError) as exc:
+            select_archetype(s)
+        msg = str(exc.value)
+        assert "motion_axis='planar' + medium='water'" in msg, msg
+        assert "2 of 3 play scenes" in msg, msg
+        assert "set locomotion to 'swim'" in msg, msg
+
+    def test_a_menu_backdrop_is_not_play_space(self):
+        """`gameplay_scenes` — the template's own menu exclusion — decides
+        what a play scene is, so a single play scene plus an underwater menu
+        backdrop is not a majority of anything."""
+        s = _scenes(_planar_schema(), {
+            "MainMenu": "Menu over an underwater backdrop.",
+            "Depot": "Fenced depot yard.",
+        })
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "scene 'MainMenu' (not a play scene)" in arch.evidence["medium"]
+
+    def test_one_mission_in_three_is_set_dressing(self):
+        s = _planar_schema()
+        s.missions = [_mission(0, "Scrap Run", "Collect scrap in the yard"),
+                      _mission(1, "Flood Gate", "Reach the submerged pump house"),
+                      _mission(2, "Drone Sweep", "Destroy the patrol drones")]
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "(1 of 3 missions)" in arch.evidence["medium"], arch.evidence
+
+    def test_a_single_mission_speaks_for_the_whole_game(self):
+        s = _planar_schema()
+        s.description = "A stunt game over the depot yard."
+        s.missions = [_mission(0, "First Jump", "Complete the skydive")]
+        arch = select_archetype(s)
+        assert arch.medium == "air", arch.evidence
+        assert "1 of 1 missions" in arch.evidence["medium"], arch.evidence
+
+    def test_one_story_beat_in_three_is_set_dressing(self):
+        s = _planar_schema()
+        s.story_beats = [
+            StoryBeat(id="b0", label="Arrival", description="Player enters the yard."),
+            StoryBeat(id="b1", label="Flood", description="Player wades past submerged crates."),
+            StoryBeat(id="b2", label="Exit", description="Player reaches the gate."),
+        ]
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "(1 of 3 story beats)" in arch.evidence["medium"], arch.evidence
+
+    def test_a_flooded_scene_cannot_sink_a_hover_game(self):
+        """The tie-break between air and water reads the same scope: the
+        description says "open sky", so one flooded district full of water
+        words does not turn a hovering drone into a submarine."""
+        s = _scenes(_planar_schema(), {
+            "Rooftops": "Rooftop pads above the yard.",
+            "Yard": "Fenced depot yard.",
+            "Docks": ("Flooded docks: water, a lake, a river and the tide, "
+                      "submerged crates everywhere."),
+        })
+        s.description = ("A drone courier game: the quadcopter hovers between "
+                         "rooftop pads high in the open sky above the yard.")
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("BoundedVolume", "air"), arch.evidence
+
+    def test_player_prose_that_names_a_medium_still_conflicts_loudly(self):
+        """The description says the player is in water and the locomotion
+        says a surface. Scoping does not decide that; it abstains with a fix
+        for either reading."""
+        s = _planar_schema()
+        s.locomotion = "drive"
+        s.description = "The player pilots a submarine through underwater canyons."
+        with pytest.raises(LayoutStrictError) as exc:
+            select_archetype(s)
+        msg = str(exc.value)
+        assert "medium='water'" in msg, msg
+        assert "in description" in msg, msg
+        assert "set locomotion to 'swim'" in msg, msg
+        assert "ArenaPlane lays it out" in msg, msg
+
+    def test_scoping_reads_pascal_case_scene_names(self):
+        """A scene with no spec is only its name; "UnderwaterReef" has to read
+        as "underwater reef" or a majority of named scenes says nothing."""
+        s = _planar_schema()
+        s.scenes = ["MainMenu", "UnderwaterReef", "UnderwaterWreck"]
+        s.scene_specs = []
+        with pytest.raises(LayoutStrictError) as exc:
+            select_archetype(s)
+        assert "2 of 2 play scenes" in str(exc.value), str(exc.value)
+
+
+# ── Motion-axis evidence is scoped too, and gap-filling never overrides drive ─
+
+def _pre_layout(schema: UnitySchema) -> UnitySchema:
+    """Clear what the layout pass baked, so Step 5's archetype decision is
+    replayed on the schema as the selector first saw it.
+
+    The two live captures below failed AFTER layout (a SceneGraph error and a
+    spatial preflight), so they carry the wrong primitive's positions — a
+    100 m BoundedVolume and a 60 m wall, plus the decision that chose it.
+    `entity_altitudes` deliberately treats baked y-data as authoritative, and
+    `compute_layout` deliberately replays a stamped decision, so without this a
+    replay would read the failure's own geometry back as altitude evidence and
+    re-apply the old archetype verbatim. The three meta keys are exactly the
+    ones `compute_layout` stamps. This is the declared transformation; the
+    fixture files themselves are verbatim."""
+    for e in schema.entities:
+        e.instance_positions = []
+        e.instance_yaws = []
+    for key in ("layout_archetype_decision", "layout_archetype", "spatial_primitive"):
+        schema.meta.pop(key, None)
+    return schema
+
+
+def _neon_platform_schema() -> UnitySchema:
+    """Live E2E run 05 of prompts/neon_fugitive.txt (origin/main e7b11e0):
+    `locomotion='drive'`, and one boss-arena `Platform` group authored with
+    kind='platform' made the whole city a VerticalSurface (it then failed
+    `[spatial.strict] world_bounds: 123 position(s) outside`)."""
+    return _pre_layout(_load("neon_fugitive_platform_kind_llm.schema.json"))
+
+
+def _neon_drift_schema() -> UnitySchema:
+    """Live E2E run 03 of the same brief: `locomotion='drive'`, and the
+    player-attached VehicleController's "drift mechanics" — a car drifting —
+    read as free-medium prose and floated the city in a BoundedVolume. The
+    capture is shared with the scene-membership tests (#303)."""
+    return _pre_layout(_load("neon_fugitive_run03_failed_llm.schema.json"))
+
+
+def _neon_combat_platforms_schema() -> UnitySchema:
+    """Live E2E run 11 of the same brief: `locomotion='drive'`, and a
+    `CombatPlatforms` group (kind='platform') made the city a VerticalSurface.
+    The capture is shared with the scene-membership tests (#303)."""
+    return _pre_layout(_load("neon_fugitive_run11_failed_llm.schema.json"))
+
+
+class TestPlayerScopedMotionEvidence:
+    """The axis half of the same rule. Rail, descent, climbing and
+    free-medium words count only where they are about the player or the whole
+    play space. Evidence that only fills a gap in the locomotion enum (hover/
+    float prose, a cast of climbable objects) never overrides an explicit
+    `locomotion='drive'`, which normalisation never produces by default. The
+    living wall's real climbing and the skydiving defaults stay green."""
+
+    def test_live_platform_kind_selects_arena_plane(self):
+        arch = select_archetype(_neon_platform_schema())
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "ArenaPlane", "planar", "ground"), arch.evidence
+        assert arch.direction == "", arch.evidence
+        why = arch.evidence["motion_axis"]
+        assert "climbable entities ['Platform'] not counted" in why, why
+        assert "locomotion='drive' declares a vehicle" in why, why
+
+    def test_live_platform_fixture_still_carries_the_kind_that_failed(self):
+        """The ROLE predicate is untouched: a kind='platform' group is still a
+        hold once a game is known to be a wall (#176). Only its standing as
+        proof that the game IS a wall changed."""
+        s = _neon_platform_schema()
+        platform = _entity(s, "Platform")
+        assert s.locomotion == "drive"
+        assert platform.kind == "platform"
+        assert is_climbable_entity(platform)
+
+    def test_live_vehicle_drift_selects_arena_plane(self):
+        arch = select_archetype(_neon_drift_schema())
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "ArenaPlane", "planar", "ground"), arch.evidence
+        why = arch.evidence["medium"]
+        assert ("free-medium prose ['drift'] in player script "
+                "'VehicleController' not counted") in why, why
+        assert "locomotion='drive' declares a surface vehicle" in why, why
+
+    def test_live_drift_fixture_still_says_drift_in_player_text(self):
+        """Guards the regression subject: the drift has to be in PLAYER-scoped
+        text, or the test above only re-proves the scoping rule."""
+        s = _neon_drift_schema()
+        script = next(sc for sc in s.scripts if sc.name == "VehicleController")
+        assert s.locomotion == "drive"
+        assert script.attach_to == "player"
+        assert "drift" in script.description.lower()
+
+    def test_live_captures_lay_out_on_the_ground_plane(self):
+        for schema in (_neon_platform_schema(), _neon_drift_schema(),
+                       _neon_combat_platforms_schema()):
+            msgs = compute_layout(schema)
+            assert msgs[0].startswith("Layout archetype ArenaPlane selected"), msgs[0]
+
+    def test_the_living_wall_still_climbs(self):
+        arch = select_archetype(_load("living_wall_llm.schema.json"))
+        assert (arch.name, arch.direction) == ("VerticalSurface", "ascent"), \
+            arch.evidence
+        assert "in description" in arch.evidence["motion_axis"], arch.evidence
+
+    def _walker(self, description: str, *holds: EntitySpec) -> UnitySchema:
+        s = _planar_schema()
+        s.description = description
+        s.entities.extend(holds)
+        return s
+
+    def test_platform_holds_still_make_a_wall_when_the_player_climbs(self):
+        """The #176 shape: holds authored as kind='platform', `locomotion` at
+        the 'walk' fallback (the enum cannot spell climb), and the player said
+        to climb only with a verb. The cast plus the verb is a climbing game."""
+        s = self._walker(
+            "Climb the ribs of a sleeping titan before it wakes.",
+            EntitySpec(name="RibPlatforms", kind="platform", count=24))
+        arch = select_archetype(s)
+        assert (arch.name, arch.direction) == ("VerticalSurface", "ascent"), \
+            arch.evidence
+        assert "the player climbs" in arch.evidence["motion_axis"], arch.evidence
+
+    def test_a_platform_kind_alone_does_not_make_a_wall(self):
+        s = self._walker(
+            "A scavenger game in a depot yard.",
+            EntitySpec(name="LoadingPlatform", kind="platform", count=1))
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+        assert "nothing about the player or the whole game says the player " \
+               "climbs" in arch.evidence["motion_axis"], arch.evidence
+
+    def test_a_driven_vehicle_never_climbs_by_its_props(self):
+        """Even a tag-declared cast and a climbing verb do not turn an explicit
+        `drive` into a wall: a car does not hold handholds."""
+        s = self._walker(
+            "Drive the convoy and climb the rankings.",
+            EntitySpec(name="Holds", kind="prop", tag="Holdable", count=12))
+        s.locomotion = "drive"
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+
+    def test_climbing_nouns_about_the_player_still_establish_the_axis(self):
+        s = self._walker("A free solo game up a granite rock face.")
+        arch = select_archetype(s)
+        assert (arch.name, arch.direction) == ("VerticalSurface", "ascent"), \
+            arch.evidence
+
+    def test_a_climbing_noun_in_one_scene_is_set_dressing(self):
+        s = _scenes(_planar_schema(), {
+            "Depot": "Fenced depot yard.",
+            "Harbor": "Container harbor.",
+            "Quarry": "An old quarry under a sheer rock face.",
+        })
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+        assert "scene 'Quarry' (1 of 3 play scenes)" in arch.evidence["motion_axis"]
+
+    def test_a_driven_hover_vehicle_stays_on_the_ground(self):
+        """"The hoverbike hovers" with `drive` is a vehicle on a surface; the
+        hover prose only fills the 'walk' gap in the enum."""
+        s = _planar_schema()
+        s.locomotion = "drive"
+        s.description = ("A courier game: the player's hoverbike hovers over "
+                         "the open-sky rooftops.")
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert "locomotion='drive' declares a surface vehicle" in arch.evidence["medium"]
+
+    def test_floating_objects_do_not_float_a_walker(self):
+        s = _planar_schema()
+        s.entities.append(EntitySpec(name="FloatingTrash", kind="prop", count=6,
+                                     model_hint="floating garbage"))
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+
+    def test_one_rail_scene_is_not_a_rail_shooter(self):
+        s = _scenes(_planar_schema(), {
+            "Depot": "Fenced depot yard.",
+            "Harbor": "Container harbor.",
+            "Tunnels": "An on-rails turret section through the tunnels.",
+        })
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+
+    def test_a_parachute_crate_is_not_a_skydive(self):
+        s = _planar_schema()
+        s.entities.append(EntitySpec(name="ParachuteCrates", kind="prop", count=3,
+                                     model_hint="parachute supply crate"))
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+
+    def test_live_combat_platforms_selects_arena_plane(self):
+        """Run 11: the second live VerticalSurface from a `platform` kind,
+        this time a whole `CombatPlatforms` group rather than one arena."""
+        s = _neon_combat_platforms_schema()
+        assert s.locomotion == "drive"
+        assert _entity(s, "CombatPlatforms").kind == "platform"
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "ArenaPlane", "planar", "ground"), arch.evidence
+        why = arch.evidence["motion_axis"]
+        assert "climbable entities ['CombatPlatforms'] not counted" in why, why

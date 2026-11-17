@@ -1,0 +1,3400 @@
+{
+  "project_name": "NeonFugitive",
+  "company_name": "Cyberpunk Studios",
+  "description": "A third-person open-world cyberpunk bounty-hunter game featuring parkour, hoverbike traversal, and neon-soaked districts.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "drive",
+  "locomotion_modes": [],
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": [
+    "MainMenu",
+    "Main",
+    "DistrictMarket",
+    "DistrictIndustrial",
+    "DistrictCorporate",
+    "DistrictTunnel",
+    "DistrictRooftop",
+    "DistrictSlums"
+  ],
+  "scene_specs": [
+    {
+      "name": "MainMenu",
+      "description": "Main menu hub with stylized neon background and hoverbike showcase.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": []
+    },
+    {
+      "name": "Main",
+      "description": "Open world hub connecting all six districts with central plaza.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "NeonSigns",
+        "StreetLamps",
+        "Crowd"
+      ]
+    },
+    {
+      "name": "DistrictMarket",
+      "description": "Bustling neon market district with crowds and narrow alleys.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "MarketStalls",
+        "Crowd",
+        "NeonSigns"
+      ]
+    },
+    {
+      "name": "DistrictIndustrial",
+      "description": "Rustic industrial docks with heavy machinery and rain.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "Crates",
+        "Pipes",
+        "Containers"
+      ]
+    },
+    {
+      "name": "DistrictCorporate",
+      "description": "Sleek corporate tower interior with holographic interfaces.",
+      "time_of_day": "night",
+      "fog": false,
+      "fog_color": null,
+      "entities": [
+        "ServerRacks",
+        "HologramProjectors"
+      ]
+    },
+    {
+      "name": "DistrictTunnel",
+      "description": "Underground tunnel district with dark lighting and steam.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "VentilationUnits",
+        "SteamPipes"
+      ]
+    },
+    {
+      "name": "DistrictRooftop",
+      "description": "Skyway rooftop district with wind and neon city views.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "VentilationUnits",
+        "NeonSigns"
+      ]
+    },
+    {
+      "name": "DistrictSlums",
+      "description": "Flooded outer slums with murky water and debris.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "DebrisPiles"
+      ]
+    }
+  ],
+  "features": [
+    "physics",
+    "ui_toolkit",
+    "input_system",
+    "cinemachine",
+    "navmesh",
+    "audio",
+    "addressables",
+    "localization",
+    "timeline",
+    "animation_rigging",
+    "inventory",
+    "dialogue",
+    "npc_dialog",
+    "vfx"
+  ],
+  "packages": [
+    {
+      "description": "Universal Render Pipeline for stylized lighting and post-processing.",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "Cinemachine package for dynamic camera control and lock-on targeting.",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "NavMesh components for AI pathfinding and patrol behaviors.",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "Input System for unified keyboard, mouse, and gamepad handling.",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "com.unity.render-pipelines.universal",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.shadergraph",
+      "package_id": "com.unity.shadergraph",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.textmeshpro",
+      "package_id": "com.unity.textmeshpro",
+      "version": "3.0.9"
+    },
+    {
+      "description": "com.unity.ui",
+      "package_id": "com.unity.ui",
+      "version": "2.0.0"
+    },
+    {
+      "description": "com.unity.inputsystem",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "com.unity.cinemachine",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "com.unity.ai.navigation",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "com.unity.addressables",
+      "package_id": "com.unity.addressables",
+      "version": "2.3.1"
+    },
+    {
+      "description": "com.unity.localization",
+      "package_id": "com.unity.localization",
+      "version": "1.5.2"
+    },
+    {
+      "description": "com.unity.timeline",
+      "package_id": "com.unity.timeline",
+      "version": "1.8.7"
+    },
+    {
+      "description": "com.unity.animation.rigging",
+      "package_id": "com.unity.animation.rigging",
+      "version": "1.3.0"
+    },
+    {
+      "description": "com.unity.ugui",
+      "package_id": "com.unity.ugui",
+      "version": "2.0.0"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "MaterialPalette",
+      "type": "material_palette",
+      "description": "Runtime NeonFugitive palette manager — creates and caches materials from palette hex colors",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "PlayerController",
+      "type": "player",
+      "description": "Handles third-person movement, parkour mechanics like wall-running and vaulting.",
+      "attach_to": "player",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "VehicleController",
+      "type": "custom",
+      "description": "Manages hoverbike physics, thrust, and tilt controls for high-speed transit.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.Physics"
+      ],
+      "extra_fields": [
+        {
+          "name": "_thrustForce",
+          "type": "float",
+          "default": "150f",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_tiltSpeed",
+          "type": "float",
+          "default": "2.5f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (Input.GetMouseButton(1)) { var tilt = Input.GetAxis(\"Vertical\") * _tiltSpeed; transform.Rotate(Vector3.right, tilt * Time.deltaTime); }",
+      "fixed_update_extra": "var rb = GetComponent<Rigidbody>(); if (rb != null) rb.AddForce(transform.forward * _thrustForce, ForceMode.Impulse);",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "CameraController",
+      "type": "camera",
+      "description": "Smooth third-person view with lock-on targeting support.",
+      "attach_to": "camera",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Orchestrates game state, scene transitions, and story progression triggers.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "BountySystem",
+      "type": "custom",
+      "description": "Tracks active bounty contracts, target locations, and reward values.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "System.Collections.Generic"
+      ],
+      "extra_fields": [
+        {
+          "name": "_activeContracts",
+          "type": "List<string>",
+          "default": "new List<string>()",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_currentTargetId",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "HealthSystem",
+      "type": "health",
+      "description": "Manages player health, shield regeneration, and damage over time.",
+      "attach_to": "player",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "dialogue_manager",
+      "description": "Sequences hologram dialogue events for the eight story acts.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "AudioDirector",
+      "type": "audio_manager",
+      "description": "Switches ambient tracks and plays SFX based on zone transitions and combat.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DistrictManager",
+      "type": "custom",
+      "description": "Handles district loading, sky color changes, and NPC schedule updates per zone.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.SceneManagement"
+      ],
+      "extra_fields": [
+        {
+          "name": "_currentZoneName",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_skyColor",
+          "type": "Vector3",
+          "default": "new Vector3(0.1f, 0.1f, 0.2f)",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DayNightCycle",
+      "type": "custom",
+      "description": "Controls lighting intensity and color shifts for the night cycle.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.Rendering"
+      ],
+      "extra_fields": [
+        {
+          "name": "_timeOfDay",
+          "type": "float",
+          "default": "0f",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_sunIntensity",
+          "type": "float",
+          "default": "0.5f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "_timeOfDay += Time.deltaTime * 0.01f;",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "WeaponSystem",
+      "type": "custom",
+      "description": "Manages ranged and melee attack combos with cooldowns.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_currentComboCount",
+          "type": "int",
+          "default": "0",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_cooldownTime",
+          "type": "float",
+          "default": "1.5f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (_cooldownTime > 0) _cooldownTime -= Time.deltaTime;",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": [
+        {
+          "atom": "PlayAnimation",
+          "args": {
+            "clip": "Attack"
+          },
+          "label": "attack"
+        },
+        {
+          "atom": "Wait",
+          "args": {
+            "seconds": 1.2
+          },
+          "label": ""
+        },
+        {
+          "atom": "PlayAnimation",
+          "args": {
+            "clip": "Idle"
+          },
+          "label": "recover"
+        }
+      ]
+    },
+    {
+      "name": "InventorySystem",
+      "type": "custom",
+      "description": "Handles equipment slots and item pickups for the inventory screen.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "System.Collections.Generic"
+      ],
+      "extra_fields": [
+        {
+          "name": "_items",
+          "type": "List<string>",
+          "default": "new List<string>()",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": [
+        {
+          "atom": "PlaySFX",
+          "args": {
+            "sound": "pickup"
+          },
+          "label": "pickup sound"
+        },
+        {
+          "atom": "TriggerEvent",
+          "args": {
+            "event": "OnPickup"
+          },
+          "label": ""
+        },
+        {
+          "atom": "Despawn",
+          "args": {
+            "entity": "self"
+          },
+          "label": ""
+        }
+      ]
+    },
+    {
+      "name": "MinimapSystem",
+      "type": "custom",
+      "description": "Renders radar display with bounty targets and district boundaries.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.UI"
+      ],
+      "extra_fields": [
+        {
+          "name": "_targetMarker",
+          "type": "GameObject",
+          "default": "null",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "SaveSystem",
+      "type": "custom",
+      "description": "Manages save and checkpoint data between acts.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "System.IO"
+      ],
+      "extra_fields": [
+        {
+          "name": "_savePath",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "ProBuilderGenerator",
+      "type": "custom",
+      "description": "Runtime-instantiates specific world pieces like terrain and room layouts.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.ProBuilder"
+      ],
+      "extra_fields": [
+        {
+          "name": "_resolution",
+          "type": "int",
+          "default": "32",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "MeshBuilder",
+      "type": "mesh_builder",
+      "description": "Singleton procedural mesh factory",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "activation",
+      "label": "Activation",
+      "description": "Player boots up for the first time in an alley.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "first_mark",
+      "label": "First Mark",
+      "description": "Player receives the first bounty contract.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "street_chase",
+      "label": "Street Chase",
+      "description": "Player pursues mark through market crowds.",
+      "trigger": "manual"
+    },
+    {
+      "id": "betrayal",
+      "label": "Betrayal",
+      "description": "Handler reveals the player is also a target.",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "underground",
+      "label": "Underground",
+      "description": "Player escapes into the tunnel district.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "data_heist",
+      "label": "Data Heist",
+      "description": "Player steals identity files from corporate tower.",
+      "trigger": "manual"
+    },
+    {
+      "id": "showdown",
+      "label": "Showdown",
+      "description": "Final confrontation with the original programmer.",
+      "trigger": "manual"
+    },
+    {
+      "id": "escape",
+      "label": "Escape",
+      "description": "Player reaches the sky-bridge extraction point.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_01",
+      "label": "Activation: player boots up for the first time in an alley",
+      "description": "Activation: player boots up for the first time in an alley",
+      "trigger": "on_start"
+    },
+    {
+      "id": "beat_02",
+      "label": "First Mark: player receives the first bounty contract",
+      "description": "First Mark: player receives the first bounty contract",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_03",
+      "label": "Street Chase: player pursues mark through market crowds (on_enemy_death)",
+      "description": "Street Chase: player pursues mark through market crowds (on_enemy_death)",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_04",
+      "label": "Betrayal: handler reveals the player is also a target",
+      "description": "Betrayal: handler reveals the player is also a target",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "beat_05",
+      "label": "Underground: player escapes into the tunnel district",
+      "description": "Underground: player escapes into the tunnel district",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_06",
+      "label": "Data Heist: player steals identity files from corporate tower (on_pickup)",
+      "description": "Data Heist: player steals identity files from corporate tower (on_pickup)",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_07",
+      "label": "Showdown: final confrontation with the original programmer",
+      "description": "Showdown: final confrontation with the original programmer",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_08",
+      "label": "Escape: player reaches the sky-bridge extraction point",
+      "description": "Escape: player reaches the sky-bridge extraction point",
+      "trigger": "on_enter_zone"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "PulsingSynthMainTheme",
+      "description": "Looping main theme with pulsing synth basslines.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "DistrictMarketAmbient",
+      "description": "Tense urban crowd noise and distant chatter.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "IndustrialDockDrone",
+      "description": "Machinery hum and water dripping sounds.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "ChaseAdrenalineTrack",
+      "description": "Fast-paced synth percussion for high-speed chases.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "CorporateTowerTension",
+      "description": "Slow arpeggiated suspense music for heists.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "RainThunderEnvironment",
+      "description": "Outdoor weather sounds with rain and thunder.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "CombatHitGunshotSFXPack",
+      "description": "Action punctuation hits and gunshots.",
+      "loop": false,
+      "category": "sfx"
+    },
+    {
+      "name": "VictoryStingCreditsOutro",
+      "description": "Emotional resolution sting for victory and credits.",
+      "loop": false,
+      "category": "music"
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "OuterSlumTerrain",
+      "description": "Procedural terrain for the outer slum district with uneven ground.",
+      "mesh_type": "terrain",
+      "resolution": 64
+    },
+    {
+      "name": "MarketRoadNetwork",
+      "description": "Grid road network for market district with tight turns.",
+      "mesh_type": "road",
+      "resolution": 48
+    },
+    {
+      "name": "FloodedZoneWaterPlane",
+      "description": "Water plane for the flooded outer zone with ripples.",
+      "mesh_type": "water",
+      "resolution": 32
+    },
+    {
+      "name": "CorporateTowerRooms",
+      "description": "Room layouts for corporate tower interior with glass walls.",
+      "mesh_type": "room",
+      "resolution": 24
+    }
+  ],
+  "entities": [
+    {
+      "name": "NeonSigns",
+      "kind": "prop",
+      "count": 15,
+      "shape": "quad",
+      "placement": "scatter",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "neon sign board",
+      "sketchfab_query": "neon sign cyberpunk",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        13.777,
+        -33.26
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          13.77660356514324,
+          0.0,
+          -33.25966317040632
+        ],
+        [
+          14.9442461548444,
+          0.0,
+          -35.41033226467144
+        ],
+        [
+          12.327977835355897,
+          0.0,
+          -30.97821839913665
+        ],
+        [
+          16.68476336642902,
+          0.0,
+          -32.64416893013037
+        ],
+        [
+          11.226485721016374,
+          0.0,
+          -34.85094556429662
+        ],
+        [
+          15.528111767462372,
+          0.0,
+          -30.316049999624735
+        ],
+        [
+          10.360874220480257,
+          0.0,
+          -32.31640354751887
+        ],
+        [
+          17.501120639993413,
+          0.0,
+          -35.12985946513618
+        ],
+        [
+          13.662675137620882,
+          0.0,
+          -37.52901277848531
+        ],
+        [
+          12.560497548864657,
+          0.0,
+          -28.51804875269273
+        ],
+        [
+          18.040302657658877,
+          0.0,
+          -30.730905463488366
+        ],
+        [
+          9.579020560155271,
+          0.0,
+          -30.074706500208865
+        ],
+        [
+          8.418711833147018,
+          0.0,
+          -35.29232940231567
+        ],
+        [
+          15.778363628668949,
+          0.0,
+          -27.354721137872232
+        ],
+        [
+          17.487872707186852,
+          0.0,
+          -38.47715013938058
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "StreetLamps",
+      "kind": "prop",
+      "count": 20,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "street lamp post",
+      "sketchfab_query": "street lamp cyberpunk",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        38.0,
+        0.0
+      ],
+      "group_radius": 19.0,
+      "instance_positions": [
+        [
+          19.0,
+          0.0,
+          0.0
+        ],
+        [
+          21.0,
+          0.0,
+          0.0
+        ],
+        [
+          23.0,
+          0.0,
+          0.0
+        ],
+        [
+          25.0,
+          0.0,
+          0.0
+        ],
+        [
+          27.0,
+          0.0,
+          0.0
+        ],
+        [
+          29.0,
+          0.0,
+          0.0
+        ],
+        [
+          31.0,
+          0.0,
+          0.0
+        ],
+        [
+          33.0,
+          0.0,
+          0.0
+        ],
+        [
+          35.0,
+          0.0,
+          0.0
+        ],
+        [
+          37.0,
+          0.0,
+          0.0
+        ],
+        [
+          39.0,
+          0.0,
+          0.0
+        ],
+        [
+          41.0,
+          0.0,
+          0.0
+        ],
+        [
+          43.0,
+          0.0,
+          0.0
+        ],
+        [
+          45.0,
+          0.0,
+          0.0
+        ],
+        [
+          47.0,
+          0.0,
+          0.0
+        ],
+        [
+          49.0,
+          0.0,
+          0.0
+        ],
+        [
+          51.0,
+          0.0,
+          0.0
+        ],
+        [
+          53.0,
+          0.0,
+          0.0
+        ],
+        [
+          55.0,
+          0.0,
+          0.0
+        ],
+        [
+          57.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "MarketStalls",
+      "kind": "building",
+      "count": 8,
+      "shape": "cube",
+      "placement": "grid",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Building",
+      "behavior": "",
+      "model_hint": "market stall structure",
+      "sketchfab_query": "cyberpunk market stall",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -25.456,
+        -25.456
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -27.455844122715718,
+          0.0,
+          -25.45584412271571
+        ],
+        [
+          -25.455844122715718,
+          0.0,
+          -25.45584412271571
+        ],
+        [
+          -23.455844122715718,
+          0.0,
+          -25.45584412271571
+        ],
+        [
+          -27.455844122715718,
+          0.0,
+          -23.45584412271571
+        ],
+        [
+          -25.455844122715718,
+          0.0,
+          -23.45584412271571
+        ],
+        [
+          -23.455844122715718,
+          0.0,
+          -23.45584412271571
+        ],
+        [
+          -27.455844122715718,
+          0.0,
+          -21.45584412271571
+        ],
+        [
+          -25.455844122715718,
+          0.0,
+          -21.45584412271571
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Crowd",
+      "kind": "crowd",
+      "count": 40,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "NPC",
+      "behavior": "",
+      "model_hint": "crowd character model",
+      "sketchfab_query": "cyberpunk pedestrian",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -0.0,
+        -20.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -3.673940397442059e-15,
+          0.0,
+          -20.0
+        ],
+        [
+          2.2788667356349794,
+          0.0,
+          -19.372458094676922
+        ],
+        [
+          0.6806234909468353,
+          0.0,
+          -17.64276848682156
+        ],
+        [
+          -2.1560912000580412,
+          0.0,
+          -21.47524141563791
+        ],
+        [
+          -1.4477229929701314,
+          0.0,
+          -17.49125782424226
+        ],
+        [
+          -3.0809218320925176,
+          0.0,
+          -19.40490049613076
+        ],
+        [
+          -0.2022888734746296,
+          0.0,
+          -23.46624564957542
+        ],
+        [
+          3.040876893403664,
+          0.0,
+          -21.813610272804166
+        ],
+        [
+          1.8679594655592309,
+          0.0,
+          -23.436132169286054
+        ],
+        [
+          4.408972342129244,
+          0.0,
+          -20.154137514058334
+        ],
+        [
+          -3.3773017916278287,
+          0.0,
+          -23.349504526460414
+        ],
+        [
+          -0.5289216359138592,
+          0.0,
+          -15.21748430588026
+        ],
+        [
+          -4.869276778756103,
+          0.0,
+          -20.718054708422894
+        ],
+        [
+          4.4491735612666625,
+          0.0,
+          -17.628493454444925
+        ],
+        [
+          -3.518880198522463,
+          0.0,
+          -16.348925928406622
+        ],
+        [
+          1.8946815301429656,
+          0.0,
+          -15.242314218065982
+        ],
+        [
+          -5.069440113751525,
+          0.0,
+          -18.517832268381248
+        ],
+        [
+          5.116087109019575,
+          0.0,
+          -22.29661399821845
+        ],
+        [
+          -1.0760386413187055,
+          0.0,
+          -25.682357434592774
+        ],
+        [
+          3.413529894341714,
+          0.0,
+          -24.797003882892426
+        ],
+        [
+          -5.607652684835099,
+          0.0,
+          -22.576993827565886
+        ],
+        [
+          1.025540342514751,
+          0.0,
+          -26.12446705713127
+        ],
+        [
+          -3.166071564940631,
+          0.0,
+          -26.06378271526259
+        ],
+        [
+          6.844464109138651,
+          0.0,
+          -19.38803144933603
+        ],
+        [
+          -2.5918068807701555,
+          0.0,
+          -13.625184715733878
+        ],
+        [
+          -6.937527100281072,
+          0.0,
+          -19.495453878244746
+        ],
+        [
+          6.395949379747966,
+          0.0,
+          -17.120942089459184
+        ],
+        [
+          -5.8712374263723905,
+          0.0,
+          -24.608338357944668
+        ],
+        [
+          6.523675265056848,
+          0.0,
+          -24.40517964297052
+        ],
+        [
+          5.2099584021381276,
+          0.0,
+          -14.081206855512196
+        ],
+        [
+          7.750145245913997,
+          0.0,
+          -21.76496942101447
+        ],
+        [
+          -6.823095656164833,
+          0.0,
+          -15.910315803538872
+        ],
+        [
+          2.1500601364826393,
+          0.0,
+          -12.324667114622255
+        ],
+        [
+          3.6124667909960433,
+          0.0,
+          -27.29001927720309
+        ],
+        [
+          -5.741865967231912,
+          0.0,
+          -14.123575571416293
+        ],
+        [
+          -2.1953074244951023,
+          0.0,
+          -28.18379075848836
+        ],
+        [
+          -0.6040118737580737,
+          0.0,
+          -11.456968640120325
+        ],
+        [
+          -5.46811930865486,
+          0.0,
+          -26.61858963990249
+        ],
+        [
+          -8.229517909237668,
+          0.0,
+          -22.48021556906904
+        ],
+        [
+          -0.17921026406393803,
+          0.0,
+          -28.622149972930156
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Crates",
+      "kind": "prop",
+      "count": 12,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "industrial crate stack",
+      "sketchfab_query": "industrial crate",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -18.478,
+        -7.654
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -18.477590650225736,
+          0.0,
+          -7.653668647301793
+        ],
+        [
+          -17.21101642543786,
+          0.0,
+          -5.346018924340026
+        ],
+        [
+          -15.729148238505656,
+          0.0,
+          -8.695837188831394
+        ],
+        [
+          -21.021365015119592,
+          0.0,
+          -6.134417704148171
+        ],
+        [
+          -19.359228591644438,
+          0.0,
+          -10.503597418790232
+        ],
+        [
+          -15.22177923533992,
+          0.0,
+          -6.55356896960589
+        ],
+        [
+          -19.312223285767278,
+          0.0,
+          -4.184969918787736
+        ],
+        [
+          -21.949332686106384,
+          0.0,
+          -8.524296888055602
+        ],
+        [
+          -16.97164783300137,
+          0.0,
+          -11.278282715801677
+        ],
+        [
+          -15.182316762066645,
+          0.0,
+          -3.981586631599649
+        ],
+        [
+          -17.267086972239444,
+          0.0,
+          -2.514462949346405
+        ],
+        [
+          -22.13100741840906,
+          0.0,
+          -11.596968020661455
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Pipes",
+      "kind": "prop",
+      "count": 10,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.2,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "industrial pipe section",
+      "sketchfab_query": "industrial pipe",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        8.61,
+        20.787
+      ],
+      "group_radius": 9.0,
+      "instance_positions": [
+        [
+          -0.3896227717854792,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          1.6103772282145208,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          3.610377228214521,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          5.610377228214521,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          7.610377228214521,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          9.61037722821452,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          11.61037722821452,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          13.61037722821452,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          15.61037722821452,
+          0.0,
+          20.78728948150395
+        ],
+        [
+          17.61037722821452,
+          0.0,
+          20.78728948150395
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Containers",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "shipping container",
+      "sketchfab_query": "shipping container",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -14.142,
+        14.142
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -14.14213562373095,
+          0.0,
+          14.142135623730951
+        ],
+        [
+          -13.86668167236666,
+          0.0,
+          12.049206513501627
+        ],
+        [
+          -12.043347285077179,
+          0.0,
+          15.363095844565308
+        ],
+        [
+          -13.995453937072,
+          0.0,
+          16.634729370227877
+        ],
+        [
+          -11.385620327990845,
+          0.0,
+          12.77567256127593
+        ],
+        [
+          -17.501879338217925,
+          0.0,
+          15.057885187824137
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "ServerRacks",
+      "kind": "prop",
+      "count": 5,
+      "shape": "cube",
+      "placement": "line",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "server rack unit",
+      "sketchfab_query": "server rack",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        28.284,
+        28.284
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          24.284271247461902,
+          0.0,
+          28.284271247461902
+        ],
+        [
+          26.284271247461902,
+          0.0,
+          28.284271247461902
+        ],
+        [
+          28.284271247461902,
+          0.0,
+          28.284271247461902
+        ],
+        [
+          30.284271247461902,
+          0.0,
+          28.284271247461902
+        ],
+        [
+          32.2842712474619,
+          0.0,
+          28.284271247461902
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "HologramProjectors",
+      "kind": "mechanism",
+      "count": 4,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Mechanism",
+      "behavior": "",
+      "model_hint": "hologram projector unit",
+      "sketchfab_query": "hologram projector",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -33.26,
+        13.777
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -36.25966317040632,
+          0.0,
+          13.776603565143237
+        ],
+        [
+          -34.25966317040632,
+          0.0,
+          13.776603565143237
+        ],
+        [
+          -32.25966317040632,
+          0.0,
+          13.776603565143237
+        ],
+        [
+          -30.25966317040632,
+          0.0,
+          13.776603565143237
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "VentilationUnits",
+      "kind": "prop",
+      "count": 8,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "ventilation unit box",
+      "sketchfab_query": "ventilation unit",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        0.0,
+        48.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          2.9391523179536475e-15,
+          0.0,
+          48.0
+        ],
+        [
+          1.4105057763250677,
+          0.0,
+          49.50218989733779
+        ],
+        [
+          -1.0022997342142752,
+          0.0,
+          49.857383464839245
+        ],
+        [
+          1.950644044242691,
+          0.0,
+          47.095344471283056
+        ],
+        [
+          -0.4424829858702621,
+          0.0,
+          45.34895499004758
+        ],
+        [
+          -2.847841855333834,
+          0.0,
+          46.596100578035895
+        ],
+        [
+          1.8750227300773588,
+          0.0,
+          44.80854199203059
+        ],
+        [
+          1.811146505089403,
+          0.0,
+          51.517157366500015
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "SteamPipes",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "steam pipe section",
+      "sketchfab_query": "steam pipe",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        18.369,
+        44.346
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          13.368804753524312,
+          0.0,
+          44.34621756054176
+        ],
+        [
+          15.368804753524312,
+          0.0,
+          44.34621756054176
+        ],
+        [
+          17.368804753524312,
+          0.0,
+          44.34621756054176
+        ],
+        [
+          19.368804753524312,
+          0.0,
+          44.34621756054176
+        ],
+        [
+          21.368804753524312,
+          0.0,
+          44.34621756054176
+        ],
+        [
+          23.368804753524312,
+          0.0,
+          44.34621756054176
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "DebrisPiles",
+      "kind": "prop",
+      "count": 10,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.5,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "debris pile rubble",
+      "sketchfab_query": "rubble debris",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -13.777,
+        33.26
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -13.77660356514323,
+          0.0,
+          33.25966317040632
+        ],
+        [
+          -13.621655477573054,
+          0.0,
+          35.265345415797256
+        ],
+        [
+          -11.397685534313545,
+          0.0,
+          34.28421041256459
+        ],
+        [
+          -12.22477472367854,
+          0.0,
+          31.057731438449657
+        ],
+        [
+          -16.028250485646886,
+          0.0,
+          35.07575656124539
+        ],
+        [
+          -17.021120305586415,
+          0.0,
+          33.20032623938428
+        ],
+        [
+          -10.617337659424361,
+          0.0,
+          32.410695502771546
+        ],
+        [
+          -16.040685425713747,
+          0.0,
+          30.661076423629574
+        ],
+        [
+          -13.689529925964745,
+          0.0,
+          29.619356869103893
+        ],
+        [
+          -14.687183962631064,
+          0.0,
+          37.12337931471378
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "CombatPlatforms",
+      "kind": "platform",
+      "count": 4,
+      "shape": "plane",
+      "placement": "grid",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 3.0,
+      "tag": "Platform",
+      "behavior": "",
+      "model_hint": "combat platform stage",
+      "sketchfab_query": "combat platform",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 30.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -8.0,
+          0.0,
+          0.0
+        ],
+        [
+          8.0,
+          0.0,
+          0.0
+        ],
+        [
+          -8.0,
+          60.0,
+          0.0
+        ],
+        [
+          8.0,
+          60.0,
+          0.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    }
+  ],
+  "atoms": [
+    {
+      "atom": "ShowHUD",
+      "args": {
+        "duration": 0.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateHealth",
+      "args": {
+        "value": 100.0,
+        "max_value": 100.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateObjective",
+      "args": {
+        "text": "Reach the objective",
+        "show_marker": true
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "Fire",
+        "event_name": "OnFire"
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "Interact",
+        "event_name": "OnInteract"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetModel",
+      "args": {
+        "model_path": "Models/Default"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Idle",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Idle",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Run",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    }
+  ],
+  "capabilities": {
+    "controller": {
+      "movement": true,
+      "jump": true,
+      "sprint": false,
+      "crouch": false,
+      "look_sensitivity": 2.0,
+      "speed": 6.0,
+      "sprint_multiplier": 1.7,
+      "jump_force": 8.0
+    },
+    "physics": {
+      "gravity": true,
+      "collision": "dynamic",
+      "mass": 80.0,
+      "drag": 0.0
+    },
+    "hud": {
+      "show_health": true,
+      "show_ammo": false,
+      "show_objective": true,
+      "show_minimap": true
+    },
+    "input": {
+      "bindings": [
+        {
+          "action": "Fire",
+          "key": "Mouse0",
+          "event": ""
+        },
+        {
+          "action": "Interact",
+          "key": "E",
+          "event": ""
+        }
+      ]
+    },
+    "model": {
+      "lod": "auto",
+      "animations": {
+        "Idle": "Idle"
+      }
+    },
+    "animation": {
+      "rig_type": "humanoid",
+      "clips": {
+        "Idle": "Idle",
+        "Run": "Run"
+      }
+    },
+    "dialog": {
+      "system": "simple",
+      "bark_on_sight": false
+    },
+    "ai": {
+      "pathfinding": true,
+      "detection_range": 15.0,
+      "behavior": "patrol"
+    },
+    "vfx": {
+      "particles": true,
+      "post_processing": true
+    }
+  },
+  "environment": {
+    "time_of_day": "night",
+    "fog": true,
+    "fog_color": "#0D0D1A",
+    "sun_intensity": 0.5
+  },
+  "color_palette": {
+    "name": "NeonFugitive",
+    "primary": "#00F5FF",
+    "secondary": "#1A0A2E",
+    "accent": "#FF2D78",
+    "background": "#0D0D1A",
+    "trim": "#FFD600"
+  },
+  "meta": {
+    "schema_clamp": {
+      "scene_specs": {
+        "cap": 8,
+        "received": 9,
+        "kept": 8,
+        "duplicates_removed": {},
+        "dropped": [
+          "ArenaShowdown"
+        ]
+      }
+    },
+    "theme": null,
+    "mashup_with": null,
+    "seed": null,
+    "twist_seed": null,
+    "concept": "This project is a fully 3D open-world third-person title targeting PC, built on Unity version 6000.0 LTS utilizing Universal Render Pipeline (URP) with mandatory bloom and chromatic aberration effects to achieve the stylized dark aesthetic defined by the NeonFugitive color palette. The camera utilizes Cinemachine for a smooth third-person view that supports lock-on targeting during combat and driving sequences, while input handling manages both on-foot parkour mechanics including wall-running, vaulting, and sliding alongside a dedicated hoverbike vehicle controller for primary high-speed transit through open sections of the six districts. Visual fidelity relies strictly on the specified palette, ranging from near-black violet environment bases to electric cyan player energy glows, ensuring consistency without importing external assets that deviate from this specific style guide or adding unlisted content.\n\nTechnical architecture requires a procedural geometry engine to runtime-instantiate specific world pieces such as terrain for outer slums, road networks for markets, water planes for flooded zones, and room layouts for corporate interiors, while utilizing ProBuilder tools at edit time specifically for the underground tunnel and rooftop district structures. Core systems include an AI framework using NavMesh components for patrol and chase behaviors alongside a bounty tracking manager and health/shield damage model to handle combat interactions. An audio system must orchestrate eight distinct looping tracks layered with non-looping SFX, driven by triggers for story acts and zone transitions, while a narrative manager sequences dialogue events as in-world hologram triggers across the eight defined acts without deviating into external content or adding NPCs beyond those required for the bounty system.",
+    "user_prompt": "Neon Fugitive — a third-person open-world cyberpunk bounty-hunter game for PC.\n\nThe player is a rogue AI enforcement agent navigating six districts of a rain-soaked\nmegacity at night. Each district has its own visual identity: neon markets, industrial\ndocks, corporate towers, underground tunnels, a rooftop skyway, and the flooded\nouter slums. All six districts plus a main menu, a boss arena, and a credits scene\nmust be separate Unity scenes.\n\nNARRATIVE — eight acts of escalating story beats:\n1. Activation: player boots up for the first time in an alley (on_start)\n2. First Mark: player receives the first bounty contract (on_enter_zone)\n3. Street Chase: player pursues mark through market crowds (on_enemy_death)\n4. Betrayal: handler reveals the player is also a target (on_timer)\n5. Underground: player escapes into the tunnel district (on_enter_zone)\n6. Data Heist: player steals identity files from corporate tower (on_pickup)\n7. Showdown: final confrontation with the original programmer (manual)\n8. Escape: player reaches the sky-bridge extraction point (on_enter_zone)\n\nAUDIO — rich layered soundscape across eight tracks:\n- Pulsing synth main theme (looping music, plays on menu)\n- District market ambient (looping ambient, tense urban crowd)\n- Industrial dock drone (looping ambient, machinery hum and water)\n- Chase adrenaline track (looping music, fast-paced synth percussion)\n- Corporate tower tension (looping music, slow arpeggiated suspense)\n- Rain and thunder environment (looping ambient, outdoor weather)\n- Combat hit and gunshot SFX pack (non-looping sfx, action punctuation)\n- Victory sting and credits outro (non-looping music, emotional resolution)\n\nPROCEDURAL GEOMETRY — runtime-built world pieces:\n- Procedural terrain for the outer slum district (terrain type, resolution 64)\n- Procedural road network grid for market district (road type, resolution 48)\n- Procedural water plane for the flooded outer zone (water type, resolution 32)\n- Procedural room layout for the corporate tower interior (room type, resolution 24)\n\nSYSTEMS — everything this game needs:\n- Third-person player movement with parkour (wall-run, vault, slide)\n- Cinemachine third-person camera with lock-on targeting mode\n- Enemy AI with NavMesh patrol, chase, and alert states\n- Bounty system tracking multiple live contracts simultaneously\n- Health and damage system with shields and healing pickups\n- Dialogue manager playing all eight story beats as in-world hologram events\n- District manager switching ambient audio and sky color per zone transition\n- Day-night cycle controller driving scene lighting and NPC schedules\n- Vehicle controller for rideable hoverbikes in open sections\n- Weapon system managing ranged and melee attack combos\n- Inventory and equipment screen\n- Minimap radar displaying bounty targets and district boundaries\n- Save and checkpoint system between acts\n- ProBuilder level generator producing the tunnel and rooftop districts at edit time\n\nVISUAL STYLE: stylized — heavy neon on deep dark backgrounds.\nCOLOR PALETTE name \"NeonFugitive\":\n  primary   #00F5FF  (player energy — cyan glow)\n  secondary #1A0A2E  (environment base — near-black violet)\n  accent    #FF2D78  (enemies and hazards — hot pink)\n  background #0D0D1A (sky and voids — pitch dark blue)\n  trim      #FFD600  (UI, collectibles, highlights — electric yellow)\n\nRENDER PIPELINE: URP (post-processing bloom and chromatic aberration essential).\nUNITY VERSION: 6000.0\nPLATFORM: PC",
+    "fill": "llm",
+    "spatial_facts": [],
+    "genre": "universal",
+    "intent_exclusions": [],
+    "intent_resolution": {
+      "format": "intent-resolution/v1",
+      "decisions": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "projectile_contract": null
+      },
+      "winners": {
+        "game_type": {
+          "field": "game_type",
+          "value": "3D",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: third-person, open-world"
+        },
+        "locomotion": {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: driving, vehicle"
+        },
+        "genre": {
+          "field": "genre",
+          "value": "universal",
+          "source": "keyword_classifier",
+          "confidence": 0.0,
+          "rationale": "classifier default"
+        },
+        "projectile_contract": {
+          "field": "projectile_contract",
+          "value": null,
+          "source": "projectile_classifier",
+          "confidence": 0.95,
+          "rationale": "no physical projectile contract for 3D"
+        }
+      },
+      "exclusions": []
+    },
+    "mechanic_registry": {
+      "format": "mechanic-registry/v1",
+      "enabled": []
+    },
+    "execution_report": {
+      "format": "unity-execution-report/v1",
+      "warnings": []
+    },
+    "intent_ledger": {
+      "format": "intent-ledger/v1",
+      "claims": [
+        {
+          "field": "game_type",
+          "value": "3D",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: third-person, open-world"
+        },
+        {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: driving, vehicle"
+        },
+        {
+          "field": "genre",
+          "value": "universal",
+          "source": "keyword_classifier",
+          "confidence": 0.0,
+          "rationale": "classifier default"
+        },
+        {
+          "field": "game_type",
+          "value": "3D",
+          "source": "schema_llm",
+          "confidence": 0.7,
+          "rationale": "schema fill"
+        },
+        {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "schema_llm",
+          "confidence": 0.7,
+          "rationale": "schema fill"
+        },
+        {
+          "field": "projectile_contract",
+          "value": null,
+          "source": "projectile_classifier",
+          "confidence": 0.95,
+          "rationale": "no physical projectile contract for 3D"
+        }
+      ],
+      "snapshots": [
+        {
+          "name": "Pre-Step3",
+          "state": {
+            "claims": 3,
+            "exclusions": []
+          }
+        },
+        {
+          "name": "Post-Step3",
+          "state": {
+            "game_type": "3D",
+            "locomotion": "drive",
+            "locomotion_modes": [],
+            "genre": null,
+            "flying_abilities": [],
+            "projectile_contract": null,
+            "entities": [
+              "NeonSigns",
+              "StreetLamps",
+              "MarketStalls",
+              "Crowd",
+              "Crates",
+              "Pipes",
+              "Containers",
+              "ServerRacks",
+              "HologramProjectors",
+              "VentilationUnits",
+              "SteamPipes",
+              "DebrisPiles",
+              "CombatPlatforms"
+            ],
+            "scripts": [
+              "PlayerController",
+              "VehicleController",
+              "CameraController",
+              "GameManager",
+              "BountySystem",
+              "HealthSystem",
+              "DialogueManager",
+              "AudioDirector",
+              "DistrictManager",
+              "DayNightCycle",
+              "WeaponSystem",
+              "InventorySystem",
+              "MinimapSystem",
+              "SaveSystem",
+              "ProBuilderGenerator"
+            ],
+            "features": [
+              "physics",
+              "ui_toolkit",
+              "input_system",
+              "cinemachine",
+              "navmesh",
+              "audio",
+              "addressables",
+              "localization",
+              "timeline",
+              "animation_rigging",
+              "inventory",
+              "dialogue",
+              "npc_dialog",
+              "vfx"
+            ]
+          }
+        },
+        {
+          "name": "Post-Resolution",
+          "state": {
+            "game_type": "3D",
+            "locomotion": "drive",
+            "locomotion_modes": [],
+            "genre": "universal",
+            "flying_abilities": [],
+            "projectile_contract": null,
+            "entities": [
+              "NeonSigns",
+              "StreetLamps",
+              "MarketStalls",
+              "Crowd",
+              "Crates",
+              "Pipes",
+              "Containers",
+              "ServerRacks",
+              "HologramProjectors",
+              "VentilationUnits",
+              "SteamPipes",
+              "DebrisPiles",
+              "CombatPlatforms"
+            ],
+            "scripts": [
+              "PlayerController",
+              "VehicleController",
+              "CameraController",
+              "GameManager",
+              "BountySystem",
+              "HealthSystem",
+              "DialogueManager",
+              "AudioDirector",
+              "DistrictManager",
+              "DayNightCycle",
+              "WeaponSystem",
+              "InventorySystem",
+              "MinimapSystem",
+              "SaveSystem",
+              "ProBuilderGenerator"
+            ],
+            "features": [
+              "physics",
+              "ui_toolkit",
+              "input_system",
+              "cinemachine",
+              "navmesh",
+              "audio",
+              "addressables",
+              "localization",
+              "timeline",
+              "animation_rigging",
+              "inventory",
+              "dialogue",
+              "npc_dialog",
+              "vfx"
+            ]
+          }
+        }
+      ],
+      "diffs": [
+        {
+          "field": "claims",
+          "before": 3,
+          "after": null,
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "entities",
+          "before": null,
+          "after": [
+            "NeonSigns",
+            "StreetLamps",
+            "MarketStalls",
+            "Crowd",
+            "Crates",
+            "Pipes",
+            "Containers",
+            "ServerRacks",
+            "HologramProjectors",
+            "VentilationUnits",
+            "SteamPipes",
+            "DebrisPiles",
+            "CombatPlatforms"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "exclusions",
+          "before": [],
+          "after": null,
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "features",
+          "before": null,
+          "after": [
+            "physics",
+            "ui_toolkit",
+            "input_system",
+            "cinemachine",
+            "navmesh",
+            "audio",
+            "addressables",
+            "localization",
+            "timeline",
+            "animation_rigging",
+            "inventory",
+            "dialogue",
+            "npc_dialog",
+            "vfx"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "flying_abilities",
+          "before": null,
+          "after": [],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "game_type",
+          "before": null,
+          "after": "3D",
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "locomotion",
+          "before": null,
+          "after": "drive",
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "locomotion_modes",
+          "before": null,
+          "after": [],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "scripts",
+          "before": null,
+          "after": [
+            "PlayerController",
+            "VehicleController",
+            "CameraController",
+            "GameManager",
+            "BountySystem",
+            "HealthSystem",
+            "DialogueManager",
+            "AudioDirector",
+            "DistrictManager",
+            "DayNightCycle",
+            "WeaponSystem",
+            "InventorySystem",
+            "MinimapSystem",
+            "SaveSystem",
+            "ProBuilderGenerator"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "genre",
+          "before": null,
+          "after": "universal",
+          "from": "Post-Step3",
+          "to": "Post-Resolution"
+        }
+      ]
+    },
+    "llm_enrichment": {
+      "format": "game-o-matic/llm-enrichment/v1",
+      "stage": "3.5",
+      "sketchfab_query_entities": [
+        "CombatPlatforms",
+        "Containers",
+        "Crates",
+        "Crowd",
+        "DebrisPiles",
+        "HologramProjectors",
+        "MarketStalls",
+        "NeonSigns",
+        "Pipes",
+        "ServerRacks",
+        "SteamPipes",
+        "StreetLamps",
+        "VentilationUnits"
+      ],
+      "reference_profile": {
+        "status": "resolved",
+        "format": "unity-reference-profile/v1",
+        "editor_version": "6000.1.4f1",
+        "assemblies": [
+          {
+            "name": "netstandard.dll",
+            "content_hash": "26e737c21244084ea58f4bbf85e9341d"
+          },
+          {
+            "name": "UnityEngine.AccessibilityModule.dll",
+            "content_hash": "f55a2ac26e61f54ee8c8832db834c17f"
+          },
+          {
+            "name": "UnityEngine.AIModule.dll",
+            "content_hash": "5e67034bc35dfa8d64b53a056d11c851"
+          },
+          {
+            "name": "UnityEngine.AMDModule.dll",
+            "content_hash": "fe65eb5ddaebbc35fd10ecbff39c7195"
+          },
+          {
+            "name": "UnityEngine.AndroidJNIModule.dll",
+            "content_hash": "1c1032f4c63e944466fce93a82149d8f"
+          },
+          {
+            "name": "UnityEngine.AnimationModule.dll",
+            "content_hash": "27e7f9aa883c76faa684972cb36e6382"
+          },
+          {
+            "name": "UnityEngine.ARModule.dll",
+            "content_hash": "f64b479503bf13690ef06d0575c82658"
+          },
+          {
+            "name": "UnityEngine.AssetBundleModule.dll",
+            "content_hash": "bbafcbd2c7b877ab815c84116dc10443"
+          },
+          {
+            "name": "UnityEngine.AudioModule.dll",
+            "content_hash": "8791576a5736a8ff95d30b7da3a94465"
+          },
+          {
+            "name": "UnityEngine.ClothModule.dll",
+            "content_hash": "0b6b77186ce94829df78453ef3a9b796"
+          },
+          {
+            "name": "UnityEngine.ClusterInputModule.dll",
+            "content_hash": "6d4a439b8814b95bca874eabf017eefd"
+          },
+          {
+            "name": "UnityEngine.ClusterRendererModule.dll",
+            "content_hash": "fa415c4c36a03873fe42ffd131881f25"
+          },
+          {
+            "name": "UnityEngine.ContentLoadModule.dll",
+            "content_hash": "d5a4c003deb7f479fcd6295077b0ab97"
+          },
+          {
+            "name": "UnityEngine.CoreModule.dll",
+            "content_hash": "de5f92d441d4e92279ce29d03b681805"
+          },
+          {
+            "name": "UnityEngine.CrashReportingModule.dll",
+            "content_hash": "8ae283b6ae5389954623d0713259ed35"
+          },
+          {
+            "name": "UnityEngine.DirectorModule.dll",
+            "content_hash": "51b5343f313bda2e8f9237f044a175ab"
+          },
+          {
+            "name": "UnityEngine.dll",
+            "content_hash": "d6755f6261cbacc1b0a370f72a029443"
+          },
+          {
+            "name": "UnityEngine.DSPGraphModule.dll",
+            "content_hash": "ed507fead565afa48bc38228c26037de"
+          },
+          {
+            "name": "UnityEngine.GameCenterModule.dll",
+            "content_hash": "840fcf607f73be050e1b15cfae15f9f4"
+          },
+          {
+            "name": "UnityEngine.GIModule.dll",
+            "content_hash": "bddcdc56422cfd7197083d8b4f51e5ce"
+          },
+          {
+            "name": "UnityEngine.GraphicsStateCollectionSerializerModule.dll",
+            "content_hash": "bc65cc872d19684206ed8beab4c55fac"
+          },
+          {
+            "name": "UnityEngine.GridModule.dll",
+            "content_hash": "5ad9036dd7e7436c13e47f3bf26db4c0"
+          },
+          {
+            "name": "UnityEngine.HierarchyCoreModule.dll",
+            "content_hash": "e049f735021046aa56caaaf2c57dd187"
+          },
+          {
+            "name": "UnityEngine.HotReloadModule.dll",
+            "content_hash": "2679bc3f06ab29f77796a03dc9d89c9b"
+          },
+          {
+            "name": "UnityEngine.ImageConversionModule.dll",
+            "content_hash": "c7b27decfc30477be2660e175c56df97"
+          },
+          {
+            "name": "UnityEngine.IMGUIModule.dll",
+            "content_hash": "ef6803a631b0137fe68f261f76214781"
+          },
+          {
+            "name": "UnityEngine.InputForUIModule.dll",
+            "content_hash": "139c48647c5b5ac760300df6a44936e9"
+          },
+          {
+            "name": "UnityEngine.InputLegacyModule.dll",
+            "content_hash": "afba5248c4ce6396097b3768b6f81625"
+          },
+          {
+            "name": "UnityEngine.InputModule.dll",
+            "content_hash": "7a8cdcc476a45348282cd64a9972e369"
+          },
+          {
+            "name": "UnityEngine.JSONSerializeModule.dll",
+            "content_hash": "ed2fceb2f23ed794bf3334fe3e2dc541"
+          },
+          {
+            "name": "UnityEngine.LocalizationModule.dll",
+            "content_hash": "1aebc1b9d2892cf268212055c2cc9758"
+          },
+          {
+            "name": "UnityEngine.MarshallingModule.dll",
+            "content_hash": "954ba350ebd821e82820743df8196913"
+          },
+          {
+            "name": "UnityEngine.MultiplayerModule.dll",
+            "content_hash": "fa4076245c7fccfc6dc7e9c616bfc6a7"
+          },
+          {
+            "name": "UnityEngine.NVIDIAModule.dll",
+            "content_hash": "54dc266a37e9e00275d268eaf8425af6"
+          },
+          {
+            "name": "UnityEngine.ParticleSystemModule.dll",
+            "content_hash": "5d4c2dfa5b16fba08ace2b13a4fea036"
+          },
+          {
+            "name": "UnityEngine.PerformanceReportingModule.dll",
+            "content_hash": "cefa6074bb1e0eae957ac3c025baa905"
+          },
+          {
+            "name": "UnityEngine.Physics2DModule.dll",
+            "content_hash": "b87730305ad74a4f0a07be54423b671f"
+          },
+          {
+            "name": "UnityEngine.PhysicsModule.dll",
+            "content_hash": "23a9ce1693ee6d907e19f873dc682587"
+          },
+          {
+            "name": "UnityEngine.PropertiesModule.dll",
+            "content_hash": "052b80e743e70a81a70ae224beeaabae"
+          },
+          {
+            "name": "UnityEngine.RuntimeInitializeOnLoadManagerInitializerModule.dll",
+            "content_hash": "46d387e37c458e6b8959734a1915e63b"
+          },
+          {
+            "name": "UnityEngine.ScreenCaptureModule.dll",
+            "content_hash": "d89c4a27eec21055d0b7d35f1f68453b"
+          },
+          {
+            "name": "UnityEngine.ShaderVariantAnalyticsModule.dll",
+            "content_hash": "973aa82c3946b16a67124fd5ce33eb6a"
+          },
+          {
+            "name": "UnityEngine.SharedInternalsModule.dll",
+            "content_hash": "328719f00cc85d70ffe02cc6ade0676d"
+          },
+          {
+            "name": "UnityEngine.SpriteMaskModule.dll",
+            "content_hash": "95f5458b0bba75173d58ab8d9e1c4b6f"
+          },
+          {
+            "name": "UnityEngine.SpriteShapeModule.dll",
+            "content_hash": "79b06d21f3e1426f79d08b5c0e5b5b73"
+          },
+          {
+            "name": "UnityEngine.StreamingModule.dll",
+            "content_hash": "b154fcd5d07e6124d012193718730b2d"
+          },
+          {
+            "name": "UnityEngine.SubstanceModule.dll",
+            "content_hash": "63aa6a9a36e262f850abc817ed8d774a"
+          },
+          {
+            "name": "UnityEngine.SubsystemsModule.dll",
+            "content_hash": "718bbd3f43d21bf847a99c54fc97e61b"
+          },
+          {
+            "name": "UnityEngine.TerrainModule.dll",
+            "content_hash": "255833a407975a21564f3f422e00b3fb"
+          },
+          {
+            "name": "UnityEngine.TerrainPhysicsModule.dll",
+            "content_hash": "05b90cfc02c393c9e5b35428f88c2f85"
+          },
+          {
+            "name": "UnityEngine.TextCoreFontEngineModule.dll",
+            "content_hash": "01b875555133b92688ccf2693dc2031c"
+          },
+          {
+            "name": "UnityEngine.TextCoreTextEngineModule.dll",
+            "content_hash": "3898935be65cefeb54b623bc825b1d26"
+          },
+          {
+            "name": "UnityEngine.TextRenderingModule.dll",
+            "content_hash": "bcc1504e2d41afadfa66f78d017bc1ba"
+          },
+          {
+            "name": "UnityEngine.TilemapModule.dll",
+            "content_hash": "aed60b1d4963eedc57d1fb7461856c6c"
+          },
+          {
+            "name": "UnityEngine.TLSModule.dll",
+            "content_hash": "208c6376c1a7f3dc5f3886076868fd08"
+          },
+          {
+            "name": "UnityEngine.UIElementsModule.dll",
+            "content_hash": "9b5bd4024d8e65d6957395dc8a008b02"
+          },
+          {
+            "name": "UnityEngine.UIModule.dll",
+            "content_hash": "3563e877de48dff0cc27f6d3cc037505"
+          },
+          {
+            "name": "UnityEngine.UmbraModule.dll",
+            "content_hash": "ae5f27f81cac6fcc6938a688689462f0"
+          },
+          {
+            "name": "UnityEngine.UnityAnalyticsCommonModule.dll",
+            "content_hash": "41a0acc942cd8b8947cc4efe1fdc996e"
+          },
+          {
+            "name": "UnityEngine.UnityAnalyticsModule.dll",
+            "content_hash": "4d1f8418d14c00b284eed99a0eb2fcb1"
+          },
+          {
+            "name": "UnityEngine.UnityConnectModule.dll",
+            "content_hash": "8dc0b5dcfb15dbb7891973eb09077191"
+          },
+          {
+            "name": "UnityEngine.UnityCurlModule.dll",
+            "content_hash": "c5b88ff5ccfdd443ae6bd728def35433"
+          },
+          {
+            "name": "UnityEngine.UnityTestProtocolModule.dll",
+            "content_hash": "15999dfc352b1845bb14a7fc1d0ffeeb"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestAssetBundleModule.dll",
+            "content_hash": "01484da4182a644860aecba235fc45a8"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestAudioModule.dll",
+            "content_hash": "d339ce4d288e5788b83e18b79b849333"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestModule.dll",
+            "content_hash": "55294929894a36797b96fd4a94b77de5"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestTextureModule.dll",
+            "content_hash": "cb53214b6ec5aed7e3e2e846539d08f6"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestWWWModule.dll",
+            "content_hash": "7692aec99f98de54482121dbd1faebfb"
+          },
+          {
+            "name": "UnityEngine.VehiclesModule.dll",
+            "content_hash": "2679293887ca1427ae3a03690ebf53ff"
+          },
+          {
+            "name": "UnityEngine.VFXModule.dll",
+            "content_hash": "940e3ed8c51f0ac70bd5f61cf9fd015b"
+          },
+          {
+            "name": "UnityEngine.VideoModule.dll",
+            "content_hash": "487507404c2fb3a15f07b55ec036e424"
+          },
+          {
+            "name": "UnityEngine.VirtualTexturingModule.dll",
+            "content_hash": "92921353fb5966b8de51e9bee1b6af0e"
+          },
+          {
+            "name": "UnityEngine.VRModule.dll",
+            "content_hash": "63f683cd3e79941fb1f8b701df8a264a"
+          },
+          {
+            "name": "UnityEngine.WindModule.dll",
+            "content_hash": "a9b19cca3a976ceeb473900dfafb0f47"
+          },
+          {
+            "name": "UnityEngine.XRModule.dll",
+            "content_hash": "39c923260c2b1d13e76c3725ce1bb4cd"
+          }
+        ],
+        "package_assemblies": []
+      },
+      "audio_cues": [
+        {
+          "id": "hoverbike_chassis",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "hoverbike chassis",
+          "gen_prompt": "High-pitched electric whine from ion thrusters cutting through humid night air.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "neon_energy_shield",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "neon energy shield",
+          "gen_prompt": "Crackling cyan static discharge vibrating against damp concrete walls during combat.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "wall_running_boots",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "wall-running boots",
+          "gen_prompt": "Sharp magnetic clanks as polymer soles snap onto electrified vertical surfaces.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "hologram_dialogue",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "hologram dialogue",
+          "gen_prompt": "Soft, distorted voice waves emanating from flickering blue light projections in fog.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "flooded_street_water",
+          "category": "ambient",
+          "kind": "gen",
+          "descriptor": "flooded street water",
+          "gen_prompt": "Muffled hydraulic splashes and distant ripples echoing off submerged metal infrastructure.",
+          "loop": true,
+          "duration_s": 4.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": false
+        },
+        {
+          "id": "bounty_tracking_radar",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "bounty tracking radar",
+          "gen_prompt": "Low-frequency mechanical whirring of a rotating sensor dish scanning dark alleyways.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "parkour_vaulting",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "parkour vaulting",
+          "gen_prompt": "Heavy fabric rustle and impact thud when sliding across rough rooftop gravel.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "corporate_interior_floor",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "corporate interior floor",
+          "gen_prompt": "Deep, resonant metallic footsteps echoing through sterile, procedurally generated hallways.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "district_transition_fog",
+          "category": "ambient",
+          "kind": "gen",
+          "descriptor": "district transition fog",
+          "gen_prompt": "Whooshing wind gusts pushing dense violet mist past the player's glowing silhouette.",
+          "loop": true,
+          "duration_s": 4.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": false
+        },
+        {
+          "id": "navmesh_patrol_ai",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "navmesh patrol AI",
+          "gen_prompt": "Subtle servo-hums and joint clicks as synthetic limbs navigate complex terrain paths.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        }
+      ]
+    },
+    "spatial_primitive": "wall_surface",
+    "layout_archetype": "VerticalSurface",
+    "layout_archetype_decision": {
+      "name": "VerticalSurface",
+      "motion_axis": "vertical",
+      "medium": "ground",
+      "goal_topology": "reach_point",
+      "direction": "ascent",
+      "evidence": {
+        "motion_axis": "climbable entities ['CombatPlatforms']",
+        "medium": "locomotion='drive' is a surface locomotion; setting vocabulary ['sky', 'water'] describes the scene, not what the player moves through",
+        "goal_topology": "mission objective types ['collect', 'defeat', 'reach']",
+        "direction": "climbable entities ['CombatPlatforms']",
+        "direction_tier": "entity"
+      }
+    },
+    "cover_points": {},
+    "mission_scenes": {
+      "data_heist": [
+        "DistrictCorporate"
+      ]
+    }
+  },
+  "world_spec": {
+    "biome": "urban",
+    "time_of_day": "day",
+    "weather": "clear",
+    "scale": "medium",
+    "regions": [
+      {
+        "name": "NeonSigns",
+        "biome": "",
+        "entities": [
+          "NeonSigns"
+        ],
+        "bounds": [
+          5.776999999999999,
+          -41.26,
+          21.777,
+          -25.259999999999998
+        ]
+      },
+      {
+        "name": "StreetLamps",
+        "biome": "",
+        "entities": [
+          "StreetLamps"
+        ],
+        "bounds": [
+          19.0,
+          -19.0,
+          57.0,
+          19.0
+        ]
+      },
+      {
+        "name": "MarketStalls",
+        "biome": "",
+        "entities": [
+          "MarketStalls"
+        ],
+        "bounds": [
+          -33.456,
+          -33.456,
+          -17.456,
+          -17.456
+        ]
+      },
+      {
+        "name": "Crowd",
+        "biome": "",
+        "entities": [
+          "Crowd"
+        ],
+        "bounds": [
+          -8.0,
+          -28.0,
+          8.0,
+          -12.0
+        ]
+      },
+      {
+        "name": "Crates",
+        "biome": "",
+        "entities": [
+          "Crates"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478000000000002,
+          0.3460000000000001
+        ]
+      },
+      {
+        "name": "Pipes",
+        "biome": "",
+        "entities": [
+          "Pipes"
+        ],
+        "bounds": [
+          -0.39000000000000057,
+          11.786999999999999,
+          17.61,
+          29.787
+        ]
+      },
+      {
+        "name": "Containers",
+        "biome": "",
+        "entities": [
+          "Containers"
+        ],
+        "bounds": [
+          -22.142,
+          6.1419999999999995,
+          -6.1419999999999995,
+          22.142
+        ]
+      },
+      {
+        "name": "ServerRacks",
+        "biome": "",
+        "entities": [
+          "ServerRacks"
+        ],
+        "bounds": [
+          20.284,
+          20.284,
+          36.284,
+          36.284
+        ]
+      },
+      {
+        "name": "HologramProjectors",
+        "biome": "",
+        "entities": [
+          "HologramProjectors"
+        ],
+        "bounds": [
+          -41.26,
+          5.776999999999999,
+          -25.259999999999998,
+          21.777
+        ]
+      },
+      {
+        "name": "VentilationUnits",
+        "biome": "",
+        "entities": [
+          "VentilationUnits"
+        ],
+        "bounds": [
+          -8.0,
+          40.0,
+          8.0,
+          56.0
+        ]
+      },
+      {
+        "name": "SteamPipes",
+        "biome": "",
+        "entities": [
+          "SteamPipes"
+        ],
+        "bounds": [
+          10.369,
+          36.346,
+          26.369,
+          52.346
+        ]
+      },
+      {
+        "name": "DebrisPiles",
+        "biome": "",
+        "entities": [
+          "DebrisPiles"
+        ],
+        "bounds": [
+          -21.777,
+          25.259999999999998,
+          -5.776999999999999,
+          41.26
+        ]
+      },
+      {
+        "name": "CombatPlatforms",
+        "biome": "",
+        "entities": [
+          "CombatPlatforms"
+        ],
+        "bounds": [
+          -8.0,
+          -8.0,
+          8.0,
+          8.0
+        ]
+      }
+    ],
+    "procedural_rules": null,
+    "course": {
+      "zones": []
+    }
+  },
+  "characters": [
+    {
+      "id": "player_character",
+      "name": "RogueAgent",
+      "role": "player",
+      "model_ref": "Crowd",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ],
+      "dialog_graph": null,
+      "npc_brain": null
+    }
+  ],
+  "missions": [
+    {
+      "id": "first_bounty",
+      "title": "First Mark",
+      "description": "Locate and neutralize the first bounty target.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Reach the marked location",
+          "type": "reach",
+          "target_ref": "NeonSigns",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 100
+      },
+      "story_beat_ref": "first_mark"
+    },
+    {
+      "id": "data_heist",
+      "title": "Data Heist",
+      "description": "Steal identity files from the corporate tower.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Enter the server room",
+          "type": "reach",
+          "target_ref": "ServerRacks",
+          "count": 1,
+          "optional": false
+        },
+        {
+          "id": "obj_2",
+          "description": "Collect all data drives",
+          "type": "collect",
+          "target_ref": "HologramProjectors",
+          "count": 4,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 500
+      },
+      "story_beat_ref": "data_heist"
+    },
+    {
+      "id": "final_showdown",
+      "title": "Showdown",
+      "description": "Confront the original programmer in the arena.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Defeat the boss",
+          "type": "defeat",
+          "target_ref": "CombatPlatforms",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 1000
+      },
+      "story_beat_ref": "showdown"
+    }
+  ],
+  "audio_specs": [
+    {
+      "id": "hoverbike_engine",
+      "type": "sfx",
+      "description": "Hoverbike engine note with pitch modulation.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "low frequency hum with high pitch whine"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "footstep_neon",
+      "type": "sfx",
+      "description": "Neon-soaked footstep sounds on wet surfaces.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "wet concrete slap with subtle reverb"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "pickup_chime",
+      "type": "sfx",
+      "description": "High-pitched chime for data file pickups.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "bright ascending sine wave"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "menu_theme",
+      "type": "music",
+      "description": "Main menu theme with pulsing synth.",
+      "generation_method": "stable_audio",
+      "parameters": {
+        "gen_prompt": "cyberpunk neon synth bassline"
+      },
+      "file_ref": "",
+      "loop": true
+    }
+  ],
+  "materials": [
+    {
+      "id": "neon_glass",
+      "name": "NeonGlassMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#00F5FF",
+        "smoothness": 0.9
+      }
+    },
+    {
+      "id": "wet_concrete",
+      "name": "WetConcreteMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#1A0A2E",
+        "smoothness": 0.3
+      }
+    },
+    {
+      "id": "rust_metal",
+      "name": "RustMetalMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#5C4B3A",
+        "smoothness": 0.2
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "hoverbike_model",
+      "name": "HoverbikeModel",
+      "category": "vehicle",
+      "generation_method": "parametric_base",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "NeonGlassMaterial"
+      ]
+    },
+    {
+      "id": "player_helmet",
+      "name": "PlayerHelmetModel",
+      "category": "character",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "NeonGlassMaterial"
+      ]
+    }
+  ],
+  "animations": [
+    {
+      "id": "idle",
+      "name": "Idle",
+      "clip": "Idle",
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "run",
+      "name": "Run",
+      "clip": "Run",
+      "loop": true,
+      "events": [
+        "Footstep"
+      ]
+    }
+  ],
+  "vfx": [
+    {
+      "id": "neon_glow",
+      "name": "NeonGlowEffect",
+      "type": "shader_fx",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "impact_spark",
+      "name": "ImpactSparkEffect",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 0.5,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "rain_particles",
+      "name": "RainParticlesEffect",
+      "type": "particle",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    }
+  ],
+  "shaders": [
+    {
+      "id": "neon_bloom",
+      "name": "NeonBloomShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Adds stylized bloom to neon sources"
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "chromatic_aberration",
+      "name": "ChromaticAberrationShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Simulates lens distortion on edges"
+      },
+      "file_ref": ""
+    }
+  ],
+  "behavior_trees": [
+    {
+      "id": "crowd_patrol",
+      "name": "CrowdBrain",
+      "tree": {
+        "root": "n1",
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "selector",
+            "children": [
+              "n2",
+              "n3"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n2",
+            "type": "sequence",
+            "children": [
+              "n4"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n4",
+            "type": "action",
+            "children": [],
+            "action": "Patrol",
+            "params": {
+              "speed": 1.5
+            }
+          },
+          {
+            "id": "n3",
+            "type": "condition",
+            "children": [],
+            "action": "PlayerVisible",
+            "params": {
+              "range": 8
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "microgens": [],
+  "wiring": {
+    "dependencies": [
+      {
+        "source": "trigger",
+        "target": "objectives",
+        "type": "triggers"
+      },
+      {
+        "source": "audio",
+        "target": "hud",
+        "type": "references"
+      }
+    ]
+  }
+}

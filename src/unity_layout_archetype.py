@@ -67,9 +67,14 @@ standard is what produced a flat arena for the living-wall brief. Either of:
 
   * one unambiguous term — descent (freefall, skydive, parachute, wingsuit,
     altimeter, …) or climbing (handhold, belay, piton, rock face, free solo,
-    …); or a group authored as something you grab (a Holdable tag, a
-    handhold/ledge/grip kind), which is structure rather than prose and
-    therefore stronger still;
+    …) — in prose about the player or the whole play space (see
+    `_EvidenceScope`: one scene, one mission or one object saying it is set
+    dressing);
+  * a CAST of groups authored as something you grab (a Holdable tag, a
+    handhold/ledge/grip/platform kind), when the player-scoped prose also says
+    the player climbs and the locomotion is not an explicit `drive` (see
+    `_climbing_cast` — the cast is object evidence, and live a lone boss-arena
+    `Platform` turned a driving city into a wall);
   * two weaker descent verbs in a scene already established as air/water;
   * real altitude data on the entities.
 
@@ -88,6 +93,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence, TypeVar
 
+from .atom_bindings import gameplay_scenes
 from .unity_schema import is_embodied
 from .unity_spatial_facts import (UNIT_ALTERNATION, UNIT_TO_M, match_facts,
                                   spatial_facts_of)
@@ -160,8 +166,10 @@ _WATER_WORDS: tuple[str, ...] = (
 # The subset of the two lists above that states the MEDIUM outright rather
 # than setting the scene. "sky", "cloud", "ocean", "abyss", "atmosphere" all
 # describe a view; "freefall", "wingsuit", "scuba", "underwater" describe where
-# the player's body is. Only these override a surface `locomotion` — see
-# `_derive_medium` for the two live hard-failures that drew the line here.
+# the player's body is. Only these override a surface `locomotion`, and only
+# where the prose is ABOUT the player or the whole play space (see
+# `_evidence_scope`) — see `_derive_medium` for the three live hard-failures that
+# drew the line here.
 _AIR_STRONG: tuple[str, ...] = (
     "freefall", "free fall", "free-fall", "skydive", "skydives", "skydiving",
     "skydiver", "skydivers", "parachute", "parachuting", "wingsuit",
@@ -599,9 +607,222 @@ def volume_height(schema) -> tuple[float, str, bool]:
                           _VOLUME_HEIGHT_REFERENTS)
 
 
+# ── Evidence scope ───────────────────────────────────────────────────────────
+# A medium or motion word is only evidence about the PLAYER when the prose it
+# sits in is about the player's body or the whole play space. `_derive_medium`
+# and every prose tier of `_derive_motion_axis` read the schema through this
+# split instead of through `_schema_text`'s flat corpus, where "submerged
+# structures" in one district's description weighs exactly as much as "the
+# player is a scuba diver" in the player's own entity.
+#
+# Locomotion adds the second half of the rule. The enum is walk/drive/fly/swim
+# /none, and `UnitySchema.normalise_locomotion` maps every word it has no alias
+# for — hover, float, glide, climb — to "walk". So `walk` may be the enum's
+# fallback for a mode it cannot spell, and prose may fill that gap. `drive` is
+# never a fallback: it is reached only through drive/car/vehicle/racing, a
+# positive declaration that the player is a surface vehicle. Gap-filling
+# evidence (hover/float prose, a cast of climbable objects) therefore never
+# overrides it; only strong vocabulary about the player still can, and where it
+# contradicts the declaration the selection abstains rather than choosing.
+_VEHICLE_LOCOMOTION = "drive"
+
+# (provenance label, lowercased text)
+_Part = tuple[str, str]
+
+
+def _spaced(identifier: str) -> str:
+    """An identifier as words: "FloodedSlums" -> "flooded slums".
+
+    Scene, script and project names arrive in PascalCase, and `_hits` is
+    word-bounded — unsplit, "UnderwaterReef" never says "underwater".
+    """
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", identifier or "").lower()
+
+
+@dataclass(frozen=True)
+class _ScopedReading:
+    """One vocabulary read through a `_EvidenceScope`.
+
+    `counted` holds the needles that speak for the player or the whole play
+    space, in table order; `sources` says where they came from. `local` names
+    every hit that did NOT count and why, so a run that stays on the ground
+    despite medium or motion words can be diagnosed from the provenance line
+    alone.
+    """
+    counted: list[str]
+    sources: list[str]
+    local:   list[str]
+
+
+@dataclass(frozen=True)
+class _EvidenceScope:
+    """Schema prose split by what it is ABOUT.
+
+      body     — the player and the whole game: the project description and
+                 name, the world biome/weather, the player's own entity and
+                 character, and every script typed or attached `player` (the
+                 controller). A word here counts outright.
+      families — the game's PARTS: its play scenes (where), its missions and
+                 its story beats (when). A word in a part counts only when a
+                 strict majority of that family carries the same vocabulary —
+                 then the part IS the play space. One flooded district in
+                 seven, one underwater mission in three, is set dressing.
+      things   — one object each: every other entity, procedural mesh, audio
+                 cue, non-player script and character, plus menu scenes and
+                 scene specs naming no listed scene. Never counts: an object
+                 being submerged says nothing about where the player is.
+    """
+    body:     tuple[_Part, ...]
+    families: tuple[tuple[str, tuple[_Part, ...]], ...]
+    things:   tuple[_Part, ...]
+
+    def read(self, needles: Sequence[str]) -> _ScopedReading:
+        counted: set[str] = set()
+        sources: list[str] = []
+        local: list[str] = []
+        for label, text in self.body:
+            found = _hits(text, needles)
+            if found:
+                counted.update(found)
+                sources.append(label)
+        for family, parts in self.families:
+            hit = [(label, found) for label, text in parts
+                   if (found := _hits(text, needles))]
+            if not hit:
+                continue
+            share = f"{len(hit)} of {len(parts)} {family}"
+            if 2 * len(hit) > len(parts):
+                for _label, found in hit:
+                    counted.update(found)
+                sources.append(share)
+            else:
+                local.extend(f"{found[:3]} in {label} ({share})"
+                             for label, found in hit)
+        for label, text in self.things:
+            found = _hits(text, needles)
+            if found:
+                local.append(f"{found[:3]} in {label}")
+        return _ScopedReading(
+            counted=[n for n in needles if n in counted],
+            sources=sources, local=local)
+
+
+def _evidence_scope(schema) -> _EvidenceScope:
+    """Split the schema's prose into body / part families / things.
+
+    Deterministic: every collection is read in its own declaration order. The
+    player is the one `pick_player_entity` finds — the same predicate the
+    layout and the generator use — so this pass and the spawn agree on who the
+    body is. Play scenes are `gameplay_scenes`, the generated template's own
+    menu exclusion, so a menu backdrop is never counted as play space.
+    """
+    player, _why = pick_player_entity(schema.entities)
+    body: list[_Part] = [
+        ("project name", _spaced(schema.project_name)),
+        ("description", (schema.description or "").lower()),
+    ]
+    if schema.world_spec is not None:
+        body.append(("world spec", f"{schema.world_spec.biome} "
+                                   f"{schema.world_spec.weather}".lower()))
+    things: list[_Part] = []
+    for e in schema.entities:
+        if player is not None and e is player:
+            body.append((f"player entity {e.name!r}", _entity_words(e)))
+        else:
+            things.append((f"entity {e.name!r}", _entity_words(e)))
+    for c in schema.characters:
+        if c.role == "player":
+            body.append((f"player character {c.name!r}", _spaced(c.name)))
+        else:
+            things.append((f"character {c.name!r}", _spaced(c.name)))
+    for s in schema.scripts:
+        text = f"{_spaced(s.name)} {s.description}".lower()
+        if s.type == "player" or s.attach_to == "player":
+            body.append((f"player script {s.name!r}", text))
+        else:
+            things.append((f"script {s.name!r}", text))
+    things.extend((f"mesh {m.name!r}", f"{_spaced(m.name)} {m.description}".lower())
+                  for m in schema.procedural_meshes)
+    things.extend((f"audio {t.name!r}", f"{_spaced(t.name)} {t.description}".lower())
+                  for t in schema.audio_tracks)
+    things.extend((f"audio {a.id!r}", f"{a.id} {a.description}".lower())
+                  for a in schema.audio_specs)
+
+    specs: dict[str, str] = {}
+    for spec in schema.scene_specs:
+        specs.setdefault(spec.name, spec.description or "")
+    play = list(dict.fromkeys(gameplay_scenes(schema)))
+    scenes = tuple((f"scene {n!r}", f"{_spaced(n)} {specs.get(n, '')}".lower())
+                   for n in play)
+    things.extend((f"scene {name!r} (not a play scene)",
+                   f"{_spaced(name)} {desc}".lower())
+                  for name, desc in specs.items() if name not in play)
+    missions = tuple(
+        (f"mission {m.title!r}",
+         " ".join([m.title, m.description,
+                   *(o.description for o in m.objectives)]).lower())
+        for m in schema.missions)
+    beats = tuple((f"story beat {b.label!r}", f"{b.label} {b.description}".lower())
+                  for b in schema.story_beats)
+    return _EvidenceScope(
+        body=tuple(body),
+        families=(("play scenes", scenes), ("missions", missions),
+                  ("story beats", beats)),
+        things=tuple(things))
+
+
+# How many uncounted locations a provenance line names before it summarises
+# the rest as a count.
+_LOCAL_REPORT_LIMIT = 3
+
+
+def _scoped_out(readings: Sequence[_ScopedReading], what: str) -> str:
+    """"; <what> is scoped to … — <where>" for every uncounted hit, or ""."""
+    local = list(dict.fromkeys(loc for r in readings for loc in r.local))
+    if not local:
+        return ""
+    more = len(local) - _LOCAL_REPORT_LIMIT
+    return (f"; {what} is scoped to single objects or a minority of the game's "
+            "parts, not to the player's body or the whole play space — "
+            + "; ".join(local[:_LOCAL_REPORT_LIMIT])
+            + (f" (+{more} more)" if more > 0 else ""))
+
+
+def _sources(reading: _ScopedReading) -> str:
+    return ", ".join(reading.sources[:_LOCAL_REPORT_LIMIT])
+
+
+def _declares_vehicle(schema) -> bool:
+    """`locomotion='drive'` — a positive declaration, never the enum's fallback
+    (see the Evidence scope note above)."""
+    return (schema.locomotion or "").lower() == _VEHICLE_LOCOMOTION
+
+
+def _scoped_free_medium(schema, scope: _EvidenceScope) -> tuple[list[str], str, str]:
+    """Hover/float/drift prose that may lift THIS player off a surface:
+    (counted words, where they came from, why anything was dropped).
+
+    Two filters, both general. The words must be about the player or the
+    whole play space (`_EvidenceScope`), and the locomotion must leave the gap
+    they fill: they exist because the enum normalises "hover" to "walk", so
+    they never override an explicit `drive`. Live, a driving game's
+    player-attached VehicleController said "drift mechanics" — a car drifting,
+    not a body floating — and it lifted the whole city into a BoundedVolume.
+    """
+    reading = scope.read(_FREE_MEDIUM_WORDS)
+    if reading.counted and _declares_vehicle(schema):
+        return [], "", (f"; free-medium prose {reading.counted[:3]} in "
+                        f"{_sources(reading)} not counted: locomotion="
+                        f"{_VEHICLE_LOCOMOTION!r} declares a surface vehicle, and "
+                        "hover/float prose only fills the gap the locomotion enum "
+                        "has for 'walk'")
+    return reading.counted, _sources(reading), _scoped_out([reading],
+                                                           "free-medium prose")
+
+
 # ── Axis derivation ──────────────────────────────────────────────────────────
 
-def _derive_medium(schema, text: str) -> tuple[str, str]:
+def _derive_medium(schema, text: str, scope: _EvidenceScope) -> tuple[str, str]:
     """What the space is made of. Locomotion is structured and outranks prose.
 
     SETTING vocabulary never lifts a walking or driving player off the ground;
@@ -622,6 +843,31 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
     strong-evidence tiering `_derive_motion_axis` uses, and for the same
     reason: one ambiguous word must never carry an axis.
 
+    The third live failure showed that tiering the WORDS is not enough — what
+    the prose is ABOUT matters as much. A cyberpunk driving game
+    (`locomotion='drive'`, eight scenes) hard-failed planar+water because one
+    district, FloodedSlums, was "waterlogged alleys with debris and submerged
+    structures". "Submerged" is a strong word when it describes the player and
+    set dressing when it describes a wall, and no word list can tell the two
+    apart. So strong vocabulary is read through `_evidence_scope`: it counts in
+    the player's own text and in the whole-game description, and in a scene,
+    mission or story beat only when most of them agree. A single object or a
+    single district never moves the whole project into water. Filtering the
+    word out instead would have broken "the player dives submerged" — the
+    skydiving lesson again, from the other side.
+
+    Hover/float prose is gap-filling evidence: it exists because the enum
+    normalises "hover" to "walk". It is scoped the same way, and it never
+    overrides an explicit `locomotion='drive'` (see the Evidence scope note) —
+    live, "drift mechanics" in a driving game's vehicle controller lifted a
+    whole city into a BoundedVolume.
+
+    When player-scoped prose DOES name a medium the surface locomotion denies
+    ("the player drives a submarine", locomotion='drive', no hover/float and
+    no descent), the evidence truly conflicts: the medium stays water, the
+    axis stays planar, and `select_archetype` abstains with a hint naming
+    both sides — loud, never a silent pick of one.
+
     `locomotion='none'` short-circuits all of it. A non-embodied game's play
     space is a SCREEN — there is no medium because there is no body in it — and
     the check has to come first, not last, because this is the one game shape
@@ -640,22 +886,39 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
     if schema.locomotion == "fly":
         return "air", "locomotion='fly'"
 
+    air_read, water_read = scope.read(_AIR_STRONG), scope.read(_WATER_STRONG)
+    air_strong, water_strong = air_read.counted, water_read.counted
+    free, free_from, free_dropped = _scoped_free_medium(schema, scope)
     air, water = _hits(text, _AIR_WORDS), _hits(text, _WATER_WORDS)
-    air_strong, water_strong = _hits(text, _AIR_STRONG), _hits(text, _WATER_STRONG)
-    free = _hits(text, _FREE_MEDIUM_WORDS)
     if not (free or air_strong or water_strong):
-        why = f"locomotion={schema.locomotion!r} is a surface locomotion"
+        why = (f"locomotion={schema.locomotion!r} is a surface locomotion"
+               + _scoped_out([air_read, water_read], "medium vocabulary")
+               + free_dropped)
         if air or water:
             why += (f"; setting vocabulary {(air + water)[:4]} describes the "
                     "scene, not what the player moves through")
         return "ground", why
 
-    lead = (f"free-medium prose {free[:3]}" if free
-            else f"medium-defining vocabulary {(air_strong + water_strong)[:3]}")
+    if free:
+        lead = f"free-medium prose {free[:3]} in {free_from}"
+    else:
+        named = air_read.sources + [s for s in water_read.sources
+                                    if s not in air_read.sources]
+        lead = (f"medium-defining vocabulary {(air_strong + water_strong)[:3]} "
+                f"in {', '.join(named[:_LOCAL_REPORT_LIMIT])}")
     if water_strong and not air_strong:
         return "water", f"{lead} + water vocabulary {water[:4]}"
     if air_strong and not water_strong:
         return "air", f"{lead} + air vocabulary {air[:4]}"
+    # Both media named outright, or free-medium prose alone: the setting
+    # vocabulary picks which. Read it through the same scope first, so one
+    # flooded district cannot sink a hover game whose own description says
+    # "open sky"; the whole corpus decides only when the scoped prose names
+    # neither medium.
+    body_air, body_water = (scope.read(_AIR_WORDS).counted,
+                            scope.read(_WATER_WORDS).counted)
+    if body_air or body_water:
+        air, water = body_air, body_water
     if water and len(water) > len(air):
         return "water", f"{lead} + water vocabulary {water[:4]}"
     if air:
@@ -668,17 +931,63 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
                       "medium")
 
 
-def _free_medium_locomotion(schema, text: str) -> Optional[str]:
+def _free_medium_locomotion(schema, scope: _EvidenceScope) -> Optional[str]:
     """Why this schema's player moves freely through its medium rather than
     over a surface — or None. Structured `locomotion` first, then the hover/
-    float vocabulary the enum cannot carry."""
+    float vocabulary the enum cannot carry, read through the same scope and
+    vehicle rule as the medium (`_scoped_free_medium`)."""
     if schema.locomotion in ("fly", "swim"):
         return f"locomotion={schema.locomotion!r}"
-    free = _hits(text, _FREE_MEDIUM_WORDS)
-    return f"free-medium vocabulary {free[:3]}" if free else None
+    free, free_from, _dropped = _scoped_free_medium(schema, scope)
+    return f"free-medium vocabulary {free[:3]} in {free_from}" if free else None
 
 
-def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
+# What the player-scoped prose must say before a cast of climbable OBJECTS may
+# establish the ascent axis: the unambiguous climbing nouns, plus the verbs
+# whose ordinary sense is physically climbing. "scale", "summit" and "upward"
+# stay out of THIS list (they remain direction verbs): "a large-scale city" and
+# "a corporate summit" are not a player on a wall.
+_CLIMB_SAYS: tuple[str, ...] = _ASCENT_STRONG + (
+    "climb", "climbs", "climbing", "climbed", "climber", "climbers",
+    "clamber", "clambers", "ascend", "ascends", "ascending", "ascent",
+    "up the wall", "up the face",
+)
+
+
+def _climbing_cast(schema, scope: _EvidenceScope) -> tuple[list[str], str]:
+    """The climbable groups that count as AXIS evidence, and why.
+
+    `is_climbable_entity` answers a ROLE question — once the game is known to
+    be a wall, which groups are its holds — and it is deliberately generous:
+    #176 added kind='platform' because a climbing schema authored its "rib
+    platforms" that way and the wall got zero holds. Reusing that answer as
+    proof that the game IS a wall is how a cyberpunk city became one: a boss
+    arena `Platform` (kind='platform') and a `CombatPlatforms` group both
+    established vertical+ascent for `locomotion='drive'` builds, live. A
+    climbing cast is object evidence; it establishes the axis only when
+      * the locomotion leaves the gap it fills — the enum cannot spell
+        "climb", so a climber arrives as 'walk', never as 'drive'; and
+      * prose about the player or the whole game says the player climbs
+        (`_CLIMB_SAYS` through `_EvidenceScope`).
+    """
+    holds = [e.name for e in schema.entities if is_climbable_entity(e)]
+    if not holds:
+        return [], ""
+    if _declares_vehicle(schema):
+        return [], (f"climbable entities {holds[:3]} not counted: locomotion="
+                    f"{_VEHICLE_LOCOMOTION!r} declares a vehicle, and a cast of "
+                    "holds only fills the gap the locomotion enum has for "
+                    "climbing")
+    says = scope.read(_CLIMB_SAYS)
+    if says.counted:
+        return holds, (f"climbable entities {holds[:3]} + the player climbs "
+                       f"({says.counted[:3]} in {_sources(says)})")
+    return [], (f"climbable entities {holds[:3]} not counted: nothing about the "
+                "player or the whole game says the player climbs")
+
+
+def _derive_motion_axis(schema, text: str, medium: str,
+                        scope: _EvidenceScope) -> tuple[str, str]:
     """How the player's own motion is constrained.
 
     Order matters: an explicit rail is the most specific claim, then descent,
@@ -695,31 +1004,40 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     is no avatar; these tables read keywords, and a game about a version
     control system will say "branch", "drop" and "push" in every paragraph
     without one metre of anything moving.
+
+    Every PROSE tier reads `_EvidenceScope`, the same split the medium uses:
+    rail, descent, climbing and free-medium words count where they are about
+    the player or the whole play space, never because one object or one scene
+    says them. "An on-rails turret section in the tunnels" is one scene, not a
+    rail shooter. Entity STRUCTURE keeps its own rules — baked altitude data is
+    geometry, and a climbing cast follows `_climbing_cast`.
     """
     if not is_embodied(schema):
         return "static", ("locomotion='none' — the player acts through a "
                           "pointer, so there is no motion to constrain")
 
-    rails = _hits(text, _PATH_WORDS)
-    if rails:
-        return "path", f"rail vocabulary {rails[:3]}"
+    rails = scope.read(_PATH_WORDS)
+    if rails.counted:
+        return "path", f"rail vocabulary {rails.counted[:3]} in {_sources(rails)}"
 
-    strong = _hits(text, _VERTICAL_STRONG)
-    if strong:
-        return "vertical", f"descent vocabulary {strong[:4]}"
+    strong = scope.read(_VERTICAL_STRONG)
+    if strong.counted:
+        return "vertical", (f"descent vocabulary {strong.counted[:4]} in "
+                            f"{_sources(strong)}")
 
     # Ascent clears the same bar descent does, and only that bar: unambiguous
-    # climbing nouns, or an entity authored as something you grab. The ascent
-    # VERBS are deliberately excluded here — "climb the leaderboard" is
-    # ordinary English and must not turn a walking game into a climbing one.
-    climb_words = _hits(text, _ASCENT_STRONG)
-    climbable = [e.name for e in schema.entities if is_climbable_entity(e)]
-    if climb_words or climbable:
-        why = (f"climbing vocabulary {climb_words[:3]}" if climb_words
-               else "")
-        if climbable:
-            why += (" + " if why else "") + f"climbable entities {climbable[:3]}"
-        return "vertical", why
+    # climbing nouns about the player or the whole game, or a climbing cast
+    # (see `_climbing_cast`). The ascent VERBS never establish it on their own
+    # — "climb the leaderboard" is ordinary English and must not turn a
+    # walking game into a climbing one.
+    nouns = scope.read(_ASCENT_STRONG)
+    cast, why_cast = _climbing_cast(schema, scope)
+    if nouns.counted or cast:
+        parts = ([f"climbing vocabulary {nouns.counted[:3]} in {_sources(nouns)}"]
+                 if nouns.counted else [])
+        if cast:
+            parts.append(why_cast)
+        return "vertical", " + ".join(parts)
 
     banded = [(n, y) for n, y in entity_altitudes(schema)
               if abs(y) >= _ALTITUDE_EVIDENCE_M]
@@ -728,7 +1046,8 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
         return "vertical", (f"entity altitude data — {top[0]!r} at y={top[1]:g} "
                             f"(>= {_ALTITUDE_EVIDENCE_M:g} m)")
 
-    weak = _hits(text, _VERTICAL_WEAK)
+    weak_read = scope.read(_VERTICAL_WEAK)
+    weak = weak_read.counted
     if len(weak) >= 2 and medium in ("air", "water"):
         return "vertical", f"descent verbs {weak[:4]} in a {medium} scene"
 
@@ -737,7 +1056,7 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     # vocabulary is not volumetric, and floating it in a box would be exactly
     # the "wrong primitive" failure the abstain path exists to prevent.
     if medium in ("air", "water"):
-        free_why = _free_medium_locomotion(schema, text)
+        free_why = _free_medium_locomotion(schema, scope)
         if free_why:
             extra = (f"; descent verbs {weak[:3]} too weak to make it vertical"
                      if weak else "")
@@ -746,6 +1065,9 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     why = "no rail, descent or altitude evidence"
     if weak:
         why += f" (descent verbs {weak[:3]} too weak on their own)"
+    if why_cast:
+        why += f"; {why_cast}"
+    why += _scoped_out([rails, strong, nouns], "motion vocabulary")
     return "planar", why
 
 
@@ -804,13 +1126,24 @@ _ARCHETYPE_BY_AXES: dict[tuple[str, str], str] = {
 _ASCENT_ARCHETYPE = "VerticalSurface"
 # What a user can change to land on a row that exists. Keyed by the axis pair
 # that abstained, so the error names a real next step instead of "unsupported".
-# No ("planar", "air") / ("planar", "water") rows: those pairs are unreachable
-# by construction now. `_derive_medium` only returns air/water when the player
-# is stated to fly, swim, hover or float — and every one of those makes
-# `_derive_motion_axis` return "volumetric" (or "vertical"/"path"), never
-# "planar". They used to be reachable off one incidental mood word, which is
-# exactly how a climbing game hard-failed twice.
+#
+# planar+air / planar+water are a genuine CONFLICT, not a missing primitive:
+# a surface locomotion (walk/drive) plus player-scoped prose that names the
+# medium outright, with nothing saying the player moves through it freely and
+# no descent. They used to be reachable off one incidental mood word ("abyss")
+# and then off one district's dressing ("submerged structures"); after
+# `_evidence_scope` only prose about the player or the whole play space gets
+# here, so the hint names both sides instead of guessing which one is wrong.
+_PLANAR_MEDIUM_HINT = (
+    "locomotion says the player moves over a surface, but prose about the "
+    "player or the whole play space says the space is {medium}. If the player "
+    "moves through the {medium}, set locomotion to '{loco}' (a BoundedVolume); "
+    "if the {medium} is only part of the world, keep that word out of the "
+    "player's own text and the project description (a single scene, mission "
+    "or object may say it freely) and ArenaPlane lays it out")
 _ABSTAIN_HINTS: dict[tuple[str, str], str] = {
+    ("planar", "air"): _PLANAR_MEDIUM_HINT.format(medium="air", loco="fly"),
+    ("planar", "water"): _PLANAR_MEDIUM_HINT.format(medium="water", loco="swim"),
     ("vertical", "ground"): (
         "descent through solid ground needs a shaft primitive, which does not "
         "exist yet. If the descent is through open air or water, set "
@@ -836,8 +1169,9 @@ def select_archetype(schema) -> LayoutArchetype:
     there is no fall-through to ArenaPlane, by design.
     """
     text = _schema_text(schema)
-    medium, why_medium = _derive_medium(schema, text)
-    motion_axis, why_axis = _derive_motion_axis(schema, text, medium)
+    scope = _evidence_scope(schema)
+    medium, why_medium = _derive_medium(schema, text, scope)
+    motion_axis, why_axis = _derive_motion_axis(schema, text, medium, scope)
     goal_topology, why_goal = _derive_goal_topology(schema, text)
 
     evidence = {
@@ -851,7 +1185,7 @@ def select_archetype(schema) -> LayoutArchetype:
     # same standing `locomotion='fly'`/'swim' already has for the medium.
     direction, why_dir, dir_tier = "", "", ""
     if motion_axis == "vertical" or (schema.locomotion or "").lower() == "climb":
-        _dir, why_dir, dir_tier = _derive_direction(schema, text)
+        _dir, why_dir, dir_tier = _derive_direction(schema, text, scope)
         evidence["direction"] = why_dir
         evidence["direction_tier"] = dir_tier
         if _dir is None:
@@ -1576,7 +1910,8 @@ def ui_board_rank(entity) -> int:
     return _UI_RANK_BY_ELEMENT.get(element, _UI_RANK_DEFAULT)
 
 
-def _derive_direction(schema, text: str) -> tuple[Optional[str], str, str]:
+def _derive_direction(schema, text: str,
+                      scope: _EvidenceScope) -> tuple[Optional[str], str, str]:
     """Which way the vertical axis runs: 'ascent' | 'descent' | None.
 
     Tiered exactly like the medium rule — structured signal first, unambiguous
@@ -1615,10 +1950,12 @@ def _derive_direction(schema, text: str) -> tuple[Optional[str], str, str]:
     if down and len(down) > len(up):
         return "descent", f"descent verbs {down[:4]} outweigh ascent {up[:4]}", "vocabulary"
 
-    # 3. Entity structure — authored tags/kinds, not prose.
-    climbable = [e.name for e in schema.entities if is_climbable_entity(e)]
-    if climbable:
-        return "ascent", f"climbable entities {climbable[:3]}", "entity"
+    # 3. Entity structure — authored tags/kinds, not prose. The same climbing-
+    #    cast rule as the axis (`_climbing_cast`): a boss-arena `Platform` in a
+    #    driving game must not turn an altitude-banded corridor into a wall.
+    cast, why_cast = _climbing_cast(schema, scope)
+    if cast:
+        return "ascent", why_cast, "entity"
     platform, why_platform = pick_exit_platform(schema, None, schema.entities, "air")
     if platform is not None:
         return "descent", f"exit platform {platform.name!r} ({why_platform})", "entity"

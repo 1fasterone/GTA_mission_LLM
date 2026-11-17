@@ -9,10 +9,10 @@ the generator runs.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple, Optional
 
 from .unity_asset_catalog import tokenize
-from .unity_schema import SceneSpec
+from .unity_scene_membership import hosting_scenes, is_menu_scene
 from .visual_reasoning_compiler import VisualReasoningCompilerError
 
 
@@ -154,31 +154,109 @@ def bind_visual_assets(schema: Any,
     return bindings
 
 
-def ensure_visual_scene_coverage(schema: Any) -> list[str]:
+class VisualSceneCoverage(NamedTuple):
+    """What :func:`ensure_visual_scene_coverage` did.
+
+    ``scene`` is the image-led gameplay scene it chose, or None when it
+    abstained. ``fixes`` are the changes it made. ``warnings`` are loud
+    abstentions, and the caller must surface them as warnings, not fixes.
+    """
+
+    scene: Optional[str]
+    fixes: list[str]
+    warnings: list[str]
+
+
+def _declared_specs(schema: Any) -> dict[str, Any]:
+    """``{scene name: spec}`` for specs of declared scenes. This is the same
+    reading as ``unity_scene_membership.hosting_scenes``."""
+    scenes = {str(s) for s in (getattr(schema, "scenes", None) or []) if s}
+    return {spec.name: spec for spec in (getattr(schema, "scene_specs", None) or [])
+            if spec.name in scenes}
+
+
+def image_led_gameplay_scene(schema: Any) -> tuple[Optional[str], list[str]]:
+    """The scene the closed image IR's visible cast belongs in, or None.
+
+    The closed image IR and the visual compile inputs name no scene:
+    ``visual_reasoning_compile*``, ``visual_asset_*``,
+    ``visual_spatial_extraction``, ``unity_spatial_fusion`` and
+    ``unity_spatial_roles`` carry nouns, selections and image-space evidence,
+    but no ``scene`` field. So the schema is the evidence. The image-led scene
+    is the first scene in ``schema.scenes`` order that a player plays in:
+
+    - not a menu (``is_menu_scene``). A menu is never a gameplay scene.
+    - not explicitly empty. A spec whose ``entities`` is ``[]`` declared that
+      it hosts nothing. ``_reconcile_scene_specs`` and the membership pass
+      never add to such a scene, and this pass does not either.
+
+    The second element names each earlier scene that was passed over, and
+    why. When no scene qualifies, the caller abstains. It never picks a
+    scene by guess.
+    """
+    specs = _declared_specs(schema)
+    passed_over: list[str] = []
+    for scene in [str(s) for s in (getattr(schema, "scenes", None) or []) if s]:
+        if is_menu_scene(scene):
+            passed_over.append(f"{scene!r} is a menu")
+            continue
+        spec = specs.get(scene)
+        if spec is not None and spec.entities is not None and not spec.entities:
+            passed_over.append(f"{scene!r} declared itself empty (entities: [])")
+            continue
+        return scene, passed_over
+    return None, passed_over
+
+
+def ensure_visual_scene_coverage(schema: Any) -> VisualSceneCoverage:
     """Make the image-led gameplay scene spawn every final schema entity.
 
-    A Concept-derived schema may preserve a partial ``scene_specs[].entities``
+    A Concept-derived schema may keep a partial ``scene_specs[].entities``
     subset even though the closed image IR requires the whole visible cast.
-    For this handoff, missing entities are added to the first gameplay scene;
-    no asset or placement decision is made here.
+    This pass adds the missing entities to the image-led gameplay scene
+    (:func:`image_led_gameplay_scene`). It makes no asset or placement
+    decision.
+
+    - A chosen scene with no spec, or with ``entities=None``, already hosts
+      every group, so nothing is added.
+    - A menu scene, or a spec that lists nothing, never receives entities.
+    - With no eligible scene, the pass ABSTAINS by name and changes nothing.
+      An entity that is still in no scene stays a recorded scene-membership
+      abstention, because ``refresh_scene_membership`` clears only entities
+      that now have a scene.
     """
     names = [str(entity.name) for entity in getattr(schema, "entities", [])
              if getattr(entity, "name", "")]
     if not names:
-        return []
-    specs = list(getattr(schema, "scene_specs", []) or [])
-    if not specs:
-        scene_name = next(iter(getattr(schema, "scenes", []) or []), "Main")
-        schema.scene_specs = [SceneSpec(name=scene_name, entities=list(names))]
-        return [f"Created visual gameplay scene spec {scene_name!r} for all "
-                f"{len(names)} schema entities"]
-    target = specs[0]
-    if target.entities is None:
-        return []
-    existing = list(target.entities)
+        return VisualSceneCoverage(None, [], [])
+    scene, passed_over = image_led_gameplay_scene(schema)
+    if scene is None:
+        homeless = [name for name in names if not hosting_scenes(schema, name)]
+        reasons = ", ".join(passed_over) or "schema.scenes declares no scene"
+        message = (
+            "[visual.coverage] ABSTAINED: no gameplay scene can take the "
+            f"image's visible cast ({reasons}), and no visual input names one. "
+            f"Left out of every gameplay scene: {', '.join(names)}."
+        )
+        if homeless:
+            message += (f" In no scene at all, so they stay scene-membership "
+                        f"abstentions: {', '.join(homeless)}.")
+        message += (" Remedy: declare a non-menu scene in schema.scenes whose "
+                    "scene_specs entry lists at least one group, or has no "
+                    "entities list.")
+        return VisualSceneCoverage(None, [], [message])
+    spec = _declared_specs(schema).get(scene)
+    if spec is None or spec.entities is None:
+        return VisualSceneCoverage(scene, [], [])
+    existing = list(spec.entities)
     missing = [name for name in names if name not in existing]
     if not missing:
-        return []
-    target.entities = existing + missing
-    return [f"Added {len(missing)} entity group(s) to visual gameplay scene "
-            f"{target.name!r}: {', '.join(missing)}"]
+        return VisualSceneCoverage(scene, [], [])
+    spec.entities = existing + missing
+    why = ("first scene in schema.scenes that is not a menu and does not "
+           "declare itself empty"
+           + (f"; passed over {', '.join(passed_over)}" if passed_over else ""))
+    return VisualSceneCoverage(scene, [
+        f"Added {len(missing)} entity group(s) to visual gameplay scene "
+        f"{scene!r} ({why}): {', '.join(missing)}"
+    ], [])

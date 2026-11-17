@@ -535,3 +535,19 @@ class TestPromptRendering:
         rendered = full_prompt(block())
         assert '"show_health":true' in rendered
         assert "{{" not in rendered
+
+
+# ── Scene membership: every entity needs a scene (neon_fugitive E2E) ──────────
+
+def test_fill_prompt_requires_every_entity_in_a_scene_and_the_player_everywhere():
+    """Live neon_fugitive runs left the player's own vehicle (tag='Player',
+    kind='vehicle') and late-invented scenery out of every scene_spec, and
+    the strict scene graph refused the build. The fill prompt states the rule
+    after the ENTITIES section, where the model finishes inventing groups."""
+    rendered = full_prompt(block())
+    rule = rendered[rendered.index("SCENE MEMBERSHIP"):]
+    assert rendered.index("ENTITIES —") < rendered.index("SCENE MEMBERSHIP")
+    assert rendered.index("SCENE MEMBERSHIP") < rendered.index("PROJECT CONCEPT")
+    assert "MUST appear in at least one scene_spec" in rule
+    assert "EVERY gameplay scene" in rule
+    assert "a vehicle the\n  player rides counts" in rule

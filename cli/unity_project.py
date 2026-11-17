@@ -716,6 +716,9 @@ def unity_validate(
     schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
     for msg in _mission_scene_fixes:
         console.print(f"  [magenta]FIX[/]  {msg}")
+    from src.unity_scene_membership import scene_membership_warnings
+    for msg in scene_membership_warnings(schema):
+        console.print(f"[yellow]WARN[/]  {msg}")
 
     model_overrides: dict = {}
     if blender_models:
