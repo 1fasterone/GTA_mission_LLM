@@ -96,8 +96,11 @@ def _debris_pair(second: str = "Debris") -> list[EntitySpec]:
 
 
 def _two_scenes(first: list[str], second: list[str]) -> list[SceneSpec]:
-    return [SceneSpec(name="Alley", entities=first),
-            SceneSpec(name="Slums", entities=second)]
+    """Each description shares one word with one `_debris_pair` copy."""
+    return [SceneSpec(name="Alley", description="a narrow alley full of scrap",
+                      entities=first),
+            SceneSpec(name="Slums", description="flooded outer slums",
+                      entities=second)]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -136,7 +139,12 @@ def test_run04_copies_are_renamed_by_the_scene_that_lists_each():
         ("Debris", "ActivationAlleyDebris", 1, "ActivationAlley"),
         ("Debris", "SlumFloodedDebris", 15, "SlumFlooded"),
     ]
-    assert all("copy k in schema order" in r["evidence"] for r in record["renames"])
+    # Paired on the copies' own text, never on array order: the flooded pile's
+    # `model_hint`/`sketchfab_query` share words with SlumFlooded; the scrap
+    # pile shares nothing with either scene and takes the one left.
+    by_index = {r["index"]: r["evidence"] for r in record["renames"]}
+    assert "shares ['flooded', 'submerged'] with scene_spec 'SlumFlooded'" in by_index[15]
+    assert by_index[1].startswith("by elimination")
     assert record["abstentions"] == [] and record["collapsed"] == []
     assert sum(m.startswith("[entity.names] 2 distinct groups named 'Debris'")
                for m in fixes) == 1
@@ -327,3 +335,100 @@ def test_step3_prompt_asks_for_unique_entity_names():
 def test_a_resolved_schema_warns_nothing():
     schema, _ = _step5(_load("neon_fugitive_run04_failed_llm.schema.json"))
     assert entity_name_warnings(schema) == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Array order is not evidence (review of #308): pairing reads each copy's text
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_run04_pairing_follows_content_when_the_copies_are_reordered():
+    """Engineer-made variant of the live fixture: the two Debris copies swap
+    places in entities[]. Under the old positional rule the scrap pile would
+    have been renamed for SlumFlooded. Each copy keeps its own scene."""
+    schema = _load("neon_fugitive_run04_failed_llm.schema.json")
+    schema.entities[1], schema.entities[15] = schema.entities[15], schema.entities[1]
+    schema, _ = _step5(schema)
+    assert (schema.entities[1].name, schema.entities[1].count) == ("SlumFloodedDebris", 15)
+    assert (schema.entities[15].name, schema.entities[15].count) == ("ActivationAlleyDebris", 20)
+    assert schema.entities[1].model_hint == "flooded debris pile"
+    spawns = _spawns(_graph(schema))
+    assert spawns["SlumFloodedDebris"] == ["Main", "SlumFlooded"]
+    assert spawns["ActivationAlleyDebris"] == ["Main", "ActivationAlley"]
+
+
+def test_array_order_against_scene_order_still_pairs_by_text():
+    flooded, scrap = reversed(_debris_pair())
+    schema = _schema([_player(), flooded, scrap],
+                     _two_scenes(["Player", "Debris"], ["Player", "Debris"]))
+    disambiguate_entity_names(schema)
+    assert [(e.name, e.model_hint) for e in schema.entities[1:]] == [
+        ("SlumsDebris", "flooded trash"), ("AlleyDebris", "scrap pile")]
+    assert schema.scene_specs[0].entities == ["Player", "AlleyDebris"]
+    assert schema.scene_specs[1].entities == ["Player", "SlumsDebris"]
+
+
+def test_copies_whose_text_names_no_scene_abstain():
+    """Order alone would have renamed these. Nothing in either copy or either
+    scene tells them apart, so the set abstains and names stay as authored."""
+    pair = [EntitySpec(name="Debris", kind="prop", count=20, model_hint="junk"),
+            EntitySpec(name="Debris", kind="prop", count=15, model_hint="rubble")]
+    schema = _schema([_player(), *pair],
+                     [SceneSpec(name="Alley", entities=["Player", "Debris"]),
+                      SceneSpec(name="Slums", entities=["Player", "Debris"])])
+    assert disambiguate_entity_names(schema) == []
+    assert [e.name for e in schema.entities[1:]] == ["Debris", "Debris"]
+    row = entity_name_abstention(schema, "Debris")
+    assert row is not None
+    assert "array order is not evidence" in row["reason"]
+    assert "entities[1] shares Alley: nothing, Slums: nothing" in row["reason"]
+    with pytest.raises(SceneGraphError, match="array order is not evidence"):
+        _graph(schema)
+
+
+def test_a_tie_between_copies_abstains():
+    pair = [EntitySpec(name="Debris", kind="prop", count=20, model_hint="flooded scrap"),
+            EntitySpec(name="Debris", kind="prop", count=15, model_hint="flooded junk")]
+    schema = _schema([_player(), *pair],
+                     [SceneSpec(name="Alley", entities=["Player", "Debris"]),
+                      SceneSpec(name="Slums", description="flooded slums",
+                                entities=["Player", "Debris"])])
+    disambiguate_entity_names(schema)
+    assert [e.name for e in schema.entities[1:]] == ["Debris", "Debris"]
+    assert "does not single out one listing scene per copy" in (
+        entity_name_abstention(schema, "Debris")["reason"])
+
+
+def test_elimination_refuses_a_copy_whose_text_points_at_a_paired_scene():
+    """The first copy pairs with Slums on two words. The copy left shares one
+    word with Slums and none with Alley, so taking Alley by elimination would
+    contradict its own text: abstain."""
+    pair = [EntitySpec(name="Debris", kind="prop", count=20,
+                       model_hint="flooded submerged trash"),
+            EntitySpec(name="Debris", kind="prop", count=15, model_hint="flooded heap")]
+    schema = _schema([_player(), *pair],
+                     [SceneSpec(name="Alley", entities=["Player", "Debris"]),
+                      SceneSpec(name="Slums", description="flooded slums, submerged cars",
+                                entities=["Player", "Debris"])])
+    disambiguate_entity_names(schema)
+    assert [e.name for e in schema.entities[1:]] == ["Debris", "Debris"]
+    reason = entity_name_abstention(schema, "Debris")["reason"]
+    assert "entities[2], the copy left once the others were paired" in reason
+    assert "points more strongly at ['Slums']" in reason
+
+
+def test_three_copies_pair_on_text_then_by_elimination():
+    trio = [EntitySpec(name="Crates", kind="prop", count=4, model_hint="frozen crates"),
+            EntitySpec(name="Crates", kind="prop", count=5, model_hint="plain wooden crates"),
+            EntitySpec(name="Crates", kind="prop", count=6, model_hint="sandy crates")]
+    specs = [SceneSpec(name="Dock", description="a quiet harbour", entities=["Player", "Crates"]),
+             SceneSpec(name="Desert", description="sandy dunes", entities=["Player", "Crates"]),
+             SceneSpec(name="Glacier", description="frozen ice shelf", entities=["Player", "Crates"])]
+    schema = _schema([_player(), *trio], specs)
+    disambiguate_entity_names(schema)
+    assert [e.name for e in schema.entities[1:]] == ["GlacierCrates", "DockCrates", "DesertCrates"]
+    evidence = {r["to"]: r["evidence"] for r in
+                schema.meta[ENTITY_NAMES_META_KEY]["renames"]}
+    assert evidence["DockCrates"].startswith("by elimination")
+    assert "['frozen']" in evidence["GlacierCrates"]
+    assert "['sandy']" in evidence["DesertCrates"]
+    _graph(schema)

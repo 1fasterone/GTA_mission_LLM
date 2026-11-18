@@ -22,12 +22,22 @@ is handled in three tiers:
    ``instance_positions``/``instance_yaws`` (and the case of the name) are the
    same group said twice. The first is kept and the rest are dropped: the
    clamp's own "first wins" rule, applied below the cap.
-2. **Positional, scene-qualified rename.** N distinct copies listed in exactly
-   N declared ``scene_specs``, once each: the fill wrote copy k while writing
-   the k-th of those scenes, so copy k (schema order) maps to the k-th listing
-   spec (``scene_specs`` order). Every copy becomes ``<Scene><Name>``
-   (``ActivationAlleyDebris``, ``SlumFloodedDebris``) and that spec's entry is
-   rewritten, so no copy silently keeps the bare name. Applied only when no new
+2. **Evidence-paired, scene-qualified rename.** N distinct copies listed in
+   exactly N declared ``scene_specs``, once each, so each listing means one
+   copy. Array order is NOT evidence for which one: the schema does not relate
+   ``entities[]`` order to ``scene_specs`` order. Each copy is paired by its own
+   descriptive text (``model_hint``, ``sketchfab_query``, ``kind``,
+   ``behavior``) against each listing spec's ``name`` and ``description``
+   (:func:`_pair_by_evidence`). A pair is fixed only when it is the strict best
+   for both sides. The last copy may take the last listing by elimination,
+   unless its own text points more strongly at a scene already paired. Run 04:
+   the flooded pile (``submerged trash``) shares ``flooded``/``submerged`` with
+   ``SlumFlooded``; the scrap pile shares nothing with either scene, so it
+   takes ``ActivationAlley`` by elimination. Every copy becomes
+   ``<Scene><Name>`` (``ActivationAlleyDebris``, ``SlumFloodedDebris``) and that
+   spec's entry is rewritten, so no copy silently keeps the bare name. When the
+   text does not decide, the set abstains (tier 3) with the overlap table.
+   Applied only when no new
    name collides and nothing outside ``scene_specs`` refers to the bare name
    (a mission ``target_ref``, a ``characters[].model_ref``, a wiring edge, an
    atom parameter, ``extensions``...), because one reference cannot be split
@@ -47,6 +57,7 @@ it is a reference, and the set abstains.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterator, Optional
 
 from .unity_schema import WorldRegion
@@ -73,6 +84,33 @@ _DESCRIPTIVE_ENTITY_FIELDS: frozenset[str] = frozenset({
 _SKIPPED_TOP_LEVEL: frozenset[str] = frozenset({"meta", "scenes"})
 
 _BOUNDS_TOLERANCE = 1e-6
+
+# A copy's own descriptive text: what the group IS, as the fill wrote it. Never
+# its name, which every copy shares.
+_COPY_EVIDENCE_FIELDS: tuple[str, ...] = ("model_hint", "sketchfab_query", "kind", "behavior")
+
+# camelCase and non-alphanumeric boundaries: "SlumFlooded" -> slum, flooded.
+_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+")
+
+# Words that say nothing about WHICH scene a group belongs to.
+_EVIDENCE_STOPWORDS: frozenset[str] = frozenset({
+    "the", "and", "with", "for", "from", "into", "onto", "over", "under", "where",
+    "that", "this", "its", "their", "are", "was", "has", "have", "who", "which",
+    "scene", "level", "area", "zone", "group", "entity", "prop", "model",
+    "object", "item",
+})
+
+
+def _words(text: Any) -> set[str]:
+    """Casefolded content words, a plural "s" folded (``slums`` = ``slum``)."""
+    out: set[str] = set()
+    for raw in _WORD_RE.findall(str(text or "")):
+        word = raw.casefold()
+        if len(word) >= 4 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        if len(word) >= 3 and word not in _EVIDENCE_STOPWORDS:
+            out.add(word)
+    return out
 
 
 def entity_identity(name: Any) -> str:
@@ -194,24 +232,86 @@ def _listings(schema: Any, identity: str) -> list[tuple[int, Any, int]]:
     return out
 
 
+def _pair_by_evidence(survivors: list[tuple[int, Any]],
+                      listings: list[tuple[int, Any, int]]
+                      ) -> tuple[Optional[list[tuple[int, int, str]]], str]:
+    """Pair each copy with the one listing spec its own text points at.
+
+    Returns ``(pairs, "")`` with ``(copy position, listing position, evidence)``
+    in copy order, or ``(None, reason)``. Overlap is the set of shared content
+    words between a copy's descriptive fields and a spec's name + description,
+    the shared name's own words removed. A pair is fixed when its overlap is
+    positive and strictly greater than every other open option on BOTH sides,
+    so pairs fixed together never conflict. When one copy and one listing are
+    left, they pair by elimination (the caller guarantees one listing per
+    copy), unless that copy's text overlaps an already-paired scene more than
+    the one left. Anything else is undecided, and the caller abstains.
+    """
+    shared_name = _words(survivors[0][1].name)
+    copy_words = [set().union(*(_words(getattr(e, f, "")) for f in _COPY_EVIDENCE_FIELDS))
+                  - shared_name for _, e in survivors]
+    spec_words = [(_words(spec.name) | _words(getattr(spec, "description", "")))
+                  - shared_name for _, spec, _ in listings]
+    shared = [[sorted(cw & sw) for sw in spec_words] for cw in copy_words]
+    score = [[len(words) for words in row] for row in shared]
+    specs = [spec.name for _, spec, _ in listings]
+
+    def table() -> str:
+        return "; ".join(
+            f"entities[{survivors[c][0]}] shares "
+            + ", ".join(f"{specs[s]}: {shared[c][s] or 'nothing'}" for s in range(len(specs)))
+            for c in range(len(survivors)))
+
+    open_copies = list(range(len(survivors)))
+    open_specs = list(range(len(listings)))
+    pairs: list[tuple[int, int, str]] = []
+    while len(open_copies) > 1:
+        pins = [(c, s) for c in open_copies for s in open_specs
+                if score[c][s] > 0
+                and all(score[c][o] < score[c][s] for o in open_specs if o != s)
+                and all(score[o][s] < score[c][s] for o in open_copies if o != c)]
+        if not pins:
+            return None, ("the copies' own text (" + ", ".join(_COPY_EVIDENCE_FIELDS)
+                          + ") does not single out one listing scene per copy, and "
+                          "array order is not evidence (the schema does not relate "
+                          "entities[] order to scene_specs order): " + table())
+        for c, s in pins:
+            pairs.append((c, s, f"its own text shares {shared[c][s]} with "
+                                f"scene_spec {specs[s]!r} and with no other copy as much"))
+            open_copies.remove(c)
+            open_specs.remove(s)
+    if open_copies:
+        c, s = open_copies[0], open_specs[0]
+        stronger = [specs[o] for o in range(len(specs)) if score[c][o] > score[c][s]]
+        if stronger:
+            return None, (f"entities[{survivors[c][0]}], the copy left once the others "
+                          f"were paired, points more strongly at {stronger} than at the "
+                          f"remaining listing {specs[s]!r}: " + table())
+        pairs.append((c, s, f"by elimination: the one copy and the one listing "
+                            f"({specs[s]!r}) left once every other copy was paired on "
+                            "its own text"))
+    return sorted(pairs), ""
+
+
 def _rename_blocker(schema: Any, identity: str, survivors: list[tuple[int, Any]],
                     listings: list[tuple[int, Any, int]],
-                    taken: set[str]) -> tuple[str, list[str]]:
-    """Why tier 2 cannot rename this set ("" when it can), and the new names."""
+                    taken: set[str]) -> tuple[str, list[tuple[int, int, str, str]]]:
+    """Why tier 2 cannot rename this set ("" when it can), and the renames as
+    ``(copy position, listing position, new name, evidence)`` in copy order."""
     declared = set(getattr(schema, "scenes", None) or [])
     names = [spec.name for _, spec, _ in listings]
     undeclared = [n for n in names if n not in declared]
     if undeclared:
         return (f"it is listed in scene_specs {undeclared} that schema.scenes "
-                "does not declare, so the listing order is not evidence"), []
+                "does not declare, so those listings are not evidence"), []
     repeated = [spec.name for _, spec, hits in listings if hits > 1]
     if repeated:
         return (f"scene_specs {repeated} list the name more than once, so a "
                 "listing cannot be matched to one copy"), []
     if len(listings) != len(survivors):
         return (f"{len(survivors)} distinct copies but {len(listings)} declared "
-                f"scene_spec(s) list the name ({names or 'none'}); the "
-                "positional rule needs exactly one listing per copy"), []
+                f"scene_spec(s) list the name ({names or 'none'}); a rename "
+                "needs exactly one listing per copy"), []
     refs = _bare_references(schema, identity)
     _, region_refs = _region_references(schema, identity,
                                         [entity for _, entity in survivors])
@@ -219,15 +319,18 @@ def _rename_blocker(schema: Any, identity: str, survivors: list[tuple[int, Any]]
     if refs:
         return (f"{', '.join(refs)} refer to the bare name, and one reference "
                 "cannot be split between the copies"), []
-    new_names = [_scene_qualified(spec.name, entity.name)
-                 for (_, entity), (_, spec, _) in zip(survivors, listings)]
-    folded = [entity_identity(n) for n in new_names]
-    clashes = sorted({n for n, f in zip(new_names, folded)
+    pairs, why = _pair_by_evidence(survivors, listings)
+    if pairs is None:
+        return why, []
+    renames = [(c, s, _scene_qualified(listings[s][1].name, survivors[c][1].name), evidence)
+               for c, s, evidence in pairs]
+    folded = [entity_identity(new) for _, _, new, _ in renames]
+    clashes = sorted({new for (_, _, new, _), f in zip(renames, folded)
                       if f in taken or folded.count(f) > 1})
     if clashes:
         return (f"the scene-qualified name(s) {clashes} would collide with "
                 "another entity name"), []
-    return "", new_names
+    return "", renames
 
 
 def _rederive_regions(schema: Any, identity: str, survivors: list[Any]) -> None:
@@ -306,10 +409,10 @@ def disambiguate_entity_names(schema: Any) -> list[str]:
         if len(survivors) == 1:
             continue
 
-        # Tier 2 — positional, scene-qualified rename.
+        # Tier 2 — evidence-paired, scene-qualified rename.
         listings = _listings(schema, identity)
-        reason, new_names = _rename_blocker(schema, identity, survivors,
-                                            listings, taken - {identity})
+        reason, planned = _rename_blocker(schema, identity, survivors,
+                                          listings, taken - {identity})
         copies = [_describe(i, e) for i, e in survivors]
         if reason:
             display = survivors[0][1].name
@@ -325,23 +428,26 @@ def disambiguate_entity_names(schema: Any) -> list[str]:
             continue
 
         listed_in = [spec.name for _, spec, _ in listings]
-        evidence = (f"{len(survivors)} distinct groups named "
-                    f"{survivors[0][1].name!r}, and exactly one declared "
-                    f"scene_spec lists the name for each ({listed_in}); copy k "
-                    "in schema order is the k-th listing in scene_specs order")
-        for (index, entity), (_, spec, _), new in zip(survivors, listings, new_names):
+        summary = (f"{len(survivors)} distinct groups named "
+                   f"{survivors[0][1].name!r}, one declared scene_spec listing "
+                   f"the name for each ({listed_in}), each copy paired with its "
+                   "scene by its own text")
+        done: list[str] = []
+        for c, s, new, evidence in planned:
+            index, entity = survivors[c]
+            spec = listings[s][1]
             old = entity.name
             spec.entities = [new if entity_identity(n) == identity else n
                              for n in (spec.entities or [])]
             entity.name = new
             renames.append({"from": old, "to": new, "index": index,
                             "scene": spec.name, "evidence": evidence})
+            done.append(f"{_copy_label(copies[c])} -> {new!r} "
+                        f"(listed in {spec.name}; {evidence})")
         _rederive_regions(schema, identity, [e for _, e in survivors])
         taken.discard(identity)
-        taken.update(entity_identity(n) for n in new_names)
-        msgs.append(f"[entity.names] {evidence} — renamed "
-                    + "; ".join(f"{_copy_label(c)} -> {new!r} (listed in {scene})"
-                                for c, new, scene in zip(copies, new_names, listed_in)))
+        taken.update(entity_identity(new) for _, _, new, _ in planned)
+        msgs.append(f"[entity.names] {summary} — renamed " + "; ".join(done))
 
     if dropped:
         schema.entities = [e for i, e in enumerate(entities) if i not in dropped]
