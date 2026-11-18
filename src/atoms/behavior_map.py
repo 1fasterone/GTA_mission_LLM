@@ -15,11 +15,13 @@ MICROGEN_ATOM_MAP — microgen kind → default atom sequence.
 
 Resolution in expand_behavior():
     1. Exact key match (e.g. "patrol")
-    2. Substring / keyword scan in _KEYWORD_ORDER priority
+    2. Whole-token word-form scan (_KEYWORD_FORMS) in _KEYWORD_ORDER priority
     3. [] — no match, entity keeps its raw behavior string for a custom script
 """
 
 from __future__ import annotations
+
+import re
 
 from .base import AtomInvocation
 
@@ -106,12 +108,54 @@ _BEHAVIOR_MAP: dict[str, list[dict]] = {
     ],
 }
 
-# Priority order for substring matching — specific patterns before broad ones.
+# Priority order for keyword matching — specific patterns before broad ones.
 _KEYWORD_ORDER = [
     "intro_fade", "outro_fade", "screen_transition", "camera_orbit",
-    "collect", "pickup", "die", "respawn", "hurt", "spawn_and_die",
+    "collect", "pickup", "die", "respawn", "hurt",
     "patrol", "chase", "guard", "attack", "wander", "idle",
 ]
+
+# The word forms that select each key, matched against WHOLE tokens of the
+# behavior string (camelCase and non-alphanumeric boundaries split it). A tuple
+# of several words is a phrase: consecutive tokens. Substring matching read
+# "sol-DIE-r" as die, "pur-CHASE" as chase and "DIE-sel" as die. Every form is
+# listed: a form missing here is a behavior that matches nothing, which keeps
+# its raw string for a custom script, never a wrong canned sequence.
+_KEYWORD_FORMS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "intro_fade":        (("intro", "fade"),),
+    "outro_fade":        (("outro", "fade"),),
+    "screen_transition": (("screen", "transition"),),
+    "camera_orbit":      (("camera", "orbit"),),
+    "collect":           (("collect",), ("collects",), ("collected",), ("collecting",),
+                          ("collectible",), ("collectibles",), ("collectable",),
+                          ("collectables",)),
+    "pickup":            (("pickup",), ("pickups",), ("pick", "up")),
+    "die":               (("die",), ("dies",), ("died",), ("dying",)),
+    "respawn":           (("respawn",), ("respawns",), ("respawned",), ("respawning",)),
+    "hurt":              (("hurt",), ("hurts",), ("hurting",)),
+    "patrol":            (("patrol",), ("patrols",), ("patrolled",), ("patrolling",),
+                          ("patroling",)),
+    "chase":             (("chase",), ("chases",), ("chased",), ("chasing",)),
+    "guard":             (("guard",), ("guards",), ("guarded",), ("guarding",)),
+    "attack":            (("attack",), ("attacks",), ("attacked",), ("attacking",)),
+    "wander":            (("wander",), ("wanders",), ("wandered",), ("wandering",)),
+    "idle":              (("idle",), ("idles",), ("idling",)),
+}
+
+_TOKEN_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+# When a canned sequence starts. EntityBehavior.cs.j2 renders one entry point
+# per trigger: "spawn" runs at Start, "player_contact" on a Player-tagged
+# collider entering the entity, "death" when OnDeath() is called. A pickup that
+# ran at Start would destroy itself the frame it spawned.
+TRIGGER_SPAWN = "spawn"
+TRIGGER_PLAYER_CONTACT = "player_contact"
+TRIGGER_DEATH = "death"
+_BEHAVIOR_TRIGGERS: dict[str, str] = {
+    "collect": TRIGGER_PLAYER_CONTACT,
+    "pickup":  TRIGGER_PLAYER_CONTACT,
+    "die":     TRIGGER_DEATH,
+}
 
 
 # ── Microgen → atom composition map ───────────────────────────────────────────
@@ -255,24 +299,69 @@ GTA5_MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def behavior_tokens(text: str) -> list[str]:
+    """Lowercase whole words of a behavior string: ``"PlayerCollectible"`` ->
+    ``["player", "collectible"]``, ``"intro_fade"`` -> ``["intro", "fade"]``."""
+    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
+
+
+def _has_phrase(tokens: list[str], phrase: tuple[str, ...]) -> bool:
+    n = len(phrase)
+    return any(tuple(tokens[i:i + n]) == phrase for i in range(len(tokens) - n + 1))
+
+
+def behavior_keyword(behavior: str) -> str | None:
+    """The _BEHAVIOR_MAP key a behavior string selects, or None.
+
+    An exact key wins. Otherwise the first key in _KEYWORD_ORDER with a word
+    form among the string's whole tokens."""
+    if not behavior:
+        return None
+    low = behavior.strip().lower()
+    if low in _BEHAVIOR_MAP:
+        return low
+    tokens = behavior_tokens(behavior)
+    for key in _KEYWORD_ORDER:
+        if any(_has_phrase(tokens, form) for form in _KEYWORD_FORMS[key]):
+            return key
+    return None
+
+
 def expand_behavior(behavior: str) -> list[AtomInvocation]:
     """Map a behavior description string to a list of AtomInvocations.
 
     Returns [] if no pattern matches — the entity keeps its raw behavior
     string for a hand-authored custom script, which is fine.
     """
-    if not behavior:
+    key = behavior_keyword(behavior)
+    if key is None:
         return []
-    low = behavior.lower()
-    # exact key first
-    if low in _BEHAVIOR_MAP:
-        return [AtomInvocation.model_validate(d) for d in _BEHAVIOR_MAP[low]]
-    # priority substring scan
-    for key in _KEYWORD_ORDER:
-        needle = key.replace("_", " ")
-        if needle in low or key in low:
-            return [AtomInvocation.model_validate(d) for d in _BEHAVIOR_MAP[key]]
-    return []
+    return [AtomInvocation.model_validate(d) for d in _BEHAVIOR_MAP[key]]
+
+
+def _calls(atoms: list) -> list[tuple[str, dict]]:
+    """(atom, args) per step: what a sequence does. Labels are comments."""
+    out: list[tuple[str, dict]] = []
+    for a in atoms or []:
+        inv = a if isinstance(a, AtomInvocation) else AtomInvocation.model_validate(a)
+        out.append((inv.atom, dict(inv.args or {})))
+    return out
+
+
+def behavior_trigger(atoms: list) -> str:
+    """When ``atoms`` starts: the trigger of the canned sequence it exactly
+    equals (atom and args, step by step), else TRIGGER_SPAWN.
+
+    Only canned sequences carry a non-spawn trigger. ``expand_behaviors`` and
+    ``unity_escort_follow`` write ``entity.atoms`` from them verbatim, so a
+    saved schema keeps its trigger, and a sequence the Step 3 fill wrote
+    itself, or one edited after expansion, starts at spawn as before.
+    """
+    calls = _calls(atoms)
+    for key, trigger in _BEHAVIOR_TRIGGERS.items():
+        if calls == _calls(_BEHAVIOR_MAP[key]):
+            return trigger
+    return TRIGGER_SPAWN
 
 
 def microgen_atoms(kind: str, engine: str = "unity") -> list[AtomInvocation]:

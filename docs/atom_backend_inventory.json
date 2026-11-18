@@ -419,7 +419,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:21"
+        "src/atoms/entity.py:27"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -484,7 +484,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:47"
+        "src/atoms/entity.py:55"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -1278,7 +1278,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:33"
+        "src/atoms/entity.py:40"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -1409,7 +1409,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:6"
+        "src/atoms/entity.py:12"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -2414,7 +2414,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:21"
+        "src/atoms/entity.py:27"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -2479,7 +2479,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:47"
+        "src/atoms/entity.py:55"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -3273,7 +3273,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:33"
+        "src/atoms/entity.py:40"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -3404,7 +3404,7 @@
       "category": "entity",
       "classification": "executable",
       "definitions": [
-        "src/atoms/entity.py:6"
+        "src/atoms/entity.py:12"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "passed",
@@ -4014,7 +4014,7 @@
         "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
         "host": "EntitySpawner.AddComponent",
         "input": "entity.atoms",
-        "phase": "Start coroutine, loops in place (one frame per pass)",
+        "phase": "Start coroutine (spawn trigger), loops in place (one frame per pass) unless it despawns; OnTriggerEnter/OnTriggerEnter2D on Player contact (player_contact) or OnDeath() (death), once",
         "template": "templates/unity/EntityBehavior.cs.j2"
       },
       {
@@ -4815,14 +4815,14 @@
       "atom": "ApplyForce",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:175"
+        "src/atoms/behavior_map.py:219"
       ]
     },
     {
       "atom": "BindAction",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:179",
+        "src/atoms/behavior_map.py:223",
         "src/capability_resolver.py:88"
       ]
     },
@@ -4830,22 +4830,22 @@
       "atom": "CameraFOV",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:105"
+        "src/atoms/behavior_map.py:107"
       ]
     },
     {
       "atom": "CameraLookAt",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:104",
-        "src/atoms/behavior_map.py:132"
+        "src/atoms/behavior_map.py:106",
+        "src/atoms/behavior_map.py:176"
       ]
     },
     {
       "atom": "CameraShake",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:78"
+        "src/atoms/behavior_map.py:80"
       ]
     },
     {
@@ -4859,23 +4859,23 @@
       "atom": "Despawn",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:64",
-        "src/atoms/behavior_map.py:70",
-        "src/atoms/behavior_map.py:75"
+        "src/atoms/behavior_map.py:66",
+        "src/atoms/behavior_map.py:72",
+        "src/atoms/behavior_map.py:77"
       ]
     },
     {
       "atom": "EndDialog",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:206"
+        "src/atoms/behavior_map.py:250"
       ]
     },
     {
       "atom": "Follow",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:37",
+        "src/atoms/behavior_map.py:39",
         "src/unity_escort_follow.py:68"
       ]
     },
@@ -4883,14 +4883,14 @@
       "atom": "Gesture",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:205"
+        "src/atoms/behavior_map.py:249"
       ]
     },
     {
       "atom": "Jump",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:128",
+        "src/atoms/behavior_map.py:172",
         "src/capability_resolver.py:46"
       ]
     },
@@ -4898,17 +4898,17 @@
       "atom": "LightFlash",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:211",
-        "src/atoms/behavior_map.py:216",
-        "src/atoms/behavior_map.py:68",
-        "src/atoms/behavior_map.py:80"
+        "src/atoms/behavior_map.py:255",
+        "src/atoms/behavior_map.py:260",
+        "src/atoms/behavior_map.py:70",
+        "src/atoms/behavior_map.py:82"
       ]
     },
     {
       "atom": "Look",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:125",
+        "src/atoms/behavior_map.py:169",
         "src/capability_resolver.py:34"
       ]
     },
@@ -4916,21 +4916,21 @@
       "atom": "LookAt",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:203"
+        "src/atoms/behavior_map.py:247"
       ]
     },
     {
       "atom": "MapInputToEvent",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:180"
+        "src/atoms/behavior_map.py:224"
       ]
     },
     {
       "atom": "Move",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:126",
+        "src/atoms/behavior_map.py:170",
         "src/capability_resolver.py:38"
       ]
     },
@@ -4938,55 +4938,55 @@
       "atom": "MoveTo",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:31",
         "src/atoms/behavior_map.py:33",
-        "src/atoms/behavior_map.py:50",
-        "src/atoms/behavior_map.py:52"
+        "src/atoms/behavior_map.py:35",
+        "src/atoms/behavior_map.py:52",
+        "src/atoms/behavior_map.py:54"
       ]
     },
     {
       "atom": "PlayAnimation",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:46",
-        "src/atoms/behavior_map.py:57",
+        "src/atoms/behavior_map.py:48",
         "src/atoms/behavior_map.py:59",
-        "src/atoms/behavior_map.py:62",
-        "src/atoms/behavior_map.py:86"
+        "src/atoms/behavior_map.py:61",
+        "src/atoms/behavior_map.py:64",
+        "src/atoms/behavior_map.py:88"
       ]
     },
     {
       "atom": "PlayMusic",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:136"
+        "src/atoms/behavior_map.py:180"
       ]
     },
     {
       "atom": "PlaySFX",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:237",
-        "src/atoms/behavior_map.py:249",
-        "src/atoms/behavior_map.py:67",
-        "src/atoms/behavior_map.py:73",
-        "src/atoms/behavior_map.py:79"
+        "src/atoms/behavior_map.py:281",
+        "src/atoms/behavior_map.py:293",
+        "src/atoms/behavior_map.py:69",
+        "src/atoms/behavior_map.py:75",
+        "src/atoms/behavior_map.py:81"
       ]
     },
     {
       "atom": "RotateTo",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:41",
         "src/atoms/behavior_map.py:43",
-        "src/atoms/behavior_map.py:54"
+        "src/atoms/behavior_map.py:45",
+        "src/atoms/behavior_map.py:56"
       ]
     },
     {
       "atom": "SayLine",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:204"
+        "src/atoms/behavior_map.py:248"
       ]
     },
     {
@@ -5001,21 +5001,21 @@
       "resolution": "registered",
       "sources": [
         "src/atoms/behavior_map.py:101",
-        "src/atoms/behavior_map.py:160",
-        "src/atoms/behavior_map.py:89",
+        "src/atoms/behavior_map.py:103",
+        "src/atoms/behavior_map.py:204",
         "src/atoms/behavior_map.py:91",
-        "src/atoms/behavior_map.py:94",
+        "src/atoms/behavior_map.py:93",
         "src/atoms/behavior_map.py:96",
-        "src/atoms/behavior_map.py:99"
+        "src/atoms/behavior_map.py:98"
       ]
     },
     {
       "atom": "SetAnimationState",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:185",
-        "src/atoms/behavior_map.py:198",
-        "src/atoms/behavior_map.py:199",
+        "src/atoms/behavior_map.py:229",
+        "src/atoms/behavior_map.py:242",
+        "src/atoms/behavior_map.py:243",
         "src/capability_resolver.py:175",
         "src/capability_resolver.py:98"
       ]
@@ -5024,15 +5024,15 @@
       "atom": "SetFlag",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:164",
-        "src/atoms/behavior_map.py:243"
+        "src/atoms/behavior_map.py:208",
+        "src/atoms/behavior_map.py:287"
       ]
     },
     {
       "atom": "SetGravity",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:174",
+        "src/atoms/behavior_map.py:218",
         "src/capability_resolver.py:56"
       ]
     },
@@ -5040,7 +5040,7 @@
       "atom": "SetHealth",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:85"
+        "src/atoms/behavior_map.py:87"
       ]
     },
     {
@@ -5054,14 +5054,14 @@
       "atom": "SetMaterial",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:221"
+        "src/atoms/behavior_map.py:265"
       ]
     },
     {
       "atom": "SetModel",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:184",
+        "src/atoms/behavior_map.py:228",
         "src/capability_resolver.py:166"
       ]
     },
@@ -5069,7 +5069,7 @@
       "atom": "ShowHUD",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:168",
+        "src/atoms/behavior_map.py:212",
         "src/capability_resolver.py:67"
       ]
     },
@@ -5077,22 +5077,22 @@
       "atom": "SpawnEntity",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:140",
-        "src/atoms/behavior_map.py:235"
+        "src/atoms/behavior_map.py:184",
+        "src/atoms/behavior_map.py:279"
       ]
     },
     {
       "atom": "SpawnParticle",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:210"
+        "src/atoms/behavior_map.py:254"
       ]
     },
     {
       "atom": "Sprint",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:127",
+        "src/atoms/behavior_map.py:171",
         "src/capability_resolver.py:42"
       ]
     },
@@ -5100,7 +5100,7 @@
       "atom": "Teleport",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:84"
+        "src/atoms/behavior_map.py:86"
       ]
     },
     {
@@ -5115,13 +5115,13 @@
       "atom": "TriggerEvent",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:152",
-        "src/atoms/behavior_map.py:156",
-        "src/atoms/behavior_map.py:189",
-        "src/atoms/behavior_map.py:194",
-        "src/atoms/behavior_map.py:244",
-        "src/atoms/behavior_map.py:69",
-        "src/atoms/behavior_map.py:74"
+        "src/atoms/behavior_map.py:196",
+        "src/atoms/behavior_map.py:200",
+        "src/atoms/behavior_map.py:233",
+        "src/atoms/behavior_map.py:238",
+        "src/atoms/behavior_map.py:288",
+        "src/atoms/behavior_map.py:71",
+        "src/atoms/behavior_map.py:76"
       ]
     },
     {
@@ -5135,7 +5135,7 @@
       "atom": "UpdateHealth",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:169",
+        "src/atoms/behavior_map.py:213",
         "src/capability_resolver.py:70"
       ]
     },
@@ -5143,7 +5143,7 @@
       "atom": "UpdateObjective",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:170",
+        "src/atoms/behavior_map.py:214",
         "src/capability_resolver.py:78"
       ]
     },
@@ -5151,20 +5151,20 @@
       "atom": "Wait",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:100",
-        "src/atoms/behavior_map.py:190",
-        "src/atoms/behavior_map.py:245",
-        "src/atoms/behavior_map.py:32",
+        "src/atoms/behavior_map.py:102",
+        "src/atoms/behavior_map.py:234",
+        "src/atoms/behavior_map.py:289",
         "src/atoms/behavior_map.py:34",
-        "src/atoms/behavior_map.py:40",
+        "src/atoms/behavior_map.py:36",
         "src/atoms/behavior_map.py:42",
-        "src/atoms/behavior_map.py:47",
-        "src/atoms/behavior_map.py:51",
+        "src/atoms/behavior_map.py:44",
+        "src/atoms/behavior_map.py:49",
         "src/atoms/behavior_map.py:53",
-        "src/atoms/behavior_map.py:58",
-        "src/atoms/behavior_map.py:63",
-        "src/atoms/behavior_map.py:90",
-        "src/atoms/behavior_map.py:95"
+        "src/atoms/behavior_map.py:55",
+        "src/atoms/behavior_map.py:60",
+        "src/atoms/behavior_map.py:65",
+        "src/atoms/behavior_map.py:92",
+        "src/atoms/behavior_map.py:97"
       ]
     },
     {
