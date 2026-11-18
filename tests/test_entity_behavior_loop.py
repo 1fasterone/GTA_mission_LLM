@@ -385,3 +385,107 @@ def test_each_entry_shape_compiles_against_real_unity(game_type, behavior):
     cs = _render_behavior(_canned(behavior), game_type)
     check = _compile({"Assets/Scripts/ProbeBehavior.cs": cs})
     assert check.accepted, (game_type, behavior, check.errors)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2D spawn paths attach the behavior (review of #309)
+# ══════════════════════════════════════════════════════════════════════════════
+# BuildSideScroller2D / BuildTopDown2D place groups through PlaceRow2D /
+# PlaceGroup2DTopDown, which used to add no behavior component at all: a 2D
+# collect/pickup handler (or any atom sequence) never ran. Both now attach it
+# exactly as SpawnGroup does, and the binding report names the groups those
+# builders leave out instead of calling them attached.
+
+_PLACERS = {"2D": "PlaceRow2D", "2d_topdown": "PlaceGroup2DTopDown"}
+
+
+def _spawner(game_type: str, *entities: EntitySpec, locomotion: str = "walk"):
+    schema = UnitySchema(project_name="TriggerProof", game_type=game_type, platform="PC",
+                         render_pipeline="URP", scenes=["MainMenu", "Main"],
+                         locomotion=locomotion, entities=list(entities))
+    generator = UnityProjectGenerator("templates/unity")
+    files = generator.generate(schema, {})
+    return generator, files
+
+
+def _file(files: dict[str, str], name: str) -> str:
+    return next(path for path in files if path.endswith(f"/{name}"))
+
+
+def _method_body(text: str, name: str) -> str:
+    start = text.index(f"private void {name}(")
+    header = text[start:text.index("{", start)].rstrip()
+    return _block_after(text, header)[0]
+
+
+def _hero(**kw) -> EntitySpec:
+    return EntitySpec(name="Hero", kind="player", tag="Player", count=1, **kw)
+
+
+def _coin() -> EntitySpec:
+    return EntitySpec(name="Coin", kind="prop", count=3, atoms=_canned("collect"))
+
+
+@pytest.mark.parametrize("game_type", ["2D", "2d_topdown"])
+def test_the_2d_builders_attach_each_groups_behavior(game_type):
+    placer = _PLACERS[game_type]
+    _, files = _spawner(game_type, _hero(), _coin())
+    text = files[_file(files, "EntitySpawner.cs")]
+    call = next(line for line in text.splitlines() if f'{placer}("Coin",' in line)
+    assert '"CoinBehavior"' in call
+    body = _method_body(text, placer)
+    # After the collider: a contact behavior's Start() turns it into a trigger.
+    assert (body.index("go.AddComponent<BoxCollider2D>()")
+            < body.index("go.AddComponent(behaviorType);"))
+
+
+@pytest.mark.parametrize("game_type", ["3D", "2D", "2d_topdown"])
+def test_the_rendered_spawner_compiles_against_real_unity(game_type):
+    from src.unity_component_api import extract_sources
+    from src.unity_component_check import check_candidate
+    from tests.test_reload_provider import _references
+
+    _, files = _spawner(game_type, _hero(), _coin())
+    spawner, behavior = _file(files, "EntitySpawner.cs"), _file(files, "CoinBehavior.cs")
+    check = check_candidate(extract_sources({behavior: files[behavior]}),
+                            {spawner: files[spawner]}, references=_references())
+    assert check.accepted, (game_type, check.errors)
+
+
+@pytest.mark.parametrize("game_type, locomotion", [
+    ("2D", "walk"), ("2d_topdown", "walk"), ("2D", "none"),
+])
+def test_bindings_attach_exactly_the_groups_the_spawner_places(game_type, locomotion):
+    """Drift guard between atom_bindings.spawner_2d_skip_reason and the
+    template's builder loops (and the UI-board branch, which a 2D project
+    with locomotion='none' takes instead)."""
+    import re
+
+    patrol = _canned("patrol")
+    entities = [EntitySpec(name="Coin", kind="prop", count=3, atoms=_canned("collect")),
+                EntitySpec(name="Lane", kind="road", count=1, atoms=patrol),
+                EntitySpec(name="Floor", kind="ground", count=1, atoms=patrol),
+                EntitySpec(name="Palm", kind="tree", count=2, atoms=patrol)]
+    if locomotion != "none":
+        entities.insert(0, _hero(atoms=patrol))
+    generator, files = _spawner(game_type, *entities, locomotion=locomotion)
+    text = files[_file(files, "EntitySpawner.cs")]
+    placed = set(re.findall(
+        r'(?:PlaceRow2D|PlaceGroup2DTopDown|SpawnGroup|SpawnTiledGroup)\("([^"]+)"', text))
+    routes = {route.source[len("entities["):-len("].atoms")]: route
+              for route in generator.last_atom_bindings.routes
+              if route.source.startswith("entities[")}
+    assert {name for name, route in routes.items() if route.attached} == placed & set(routes)
+    for name, route in routes.items():
+        if not route.attached:
+            assert route.finding and "builder does not place" in route.finding, (name, route)
+
+
+def test_a_2d_player_route_is_reported_unattached():
+    generator, _ = _spawner("2D", _hero(atoms=_canned("patrol")), _coin())
+    hero = generator.last_atom_bindings.route("entities[Hero].atoms")
+    assert hero.host is None and hero.scenes == []
+    assert hero.finding == ("the 2D side-scroller builder does not place kind='player' "
+                            "groups, so nothing adds its behavior")
+    coin = generator.last_atom_bindings.route("entities[Coin].atoms")
+    assert coin.host == "EntitySpawner.AddComponent" and coin.trigger == "player_contact"

@@ -168,6 +168,14 @@ Each atom in a route carries its provider: the Unity lowerer it reaches
   `entity_spawn`, started from `Start()` as before. `expand_behavior` matches
   whole words from an explicit word-form table, so `soldier`, `diesel` and
   `purchase` no longer select `die` or `chase`.
+- **2D attachment.** An embodied `2D`/`2d_topdown` project places its groups
+  through `PlaceRow2D`/`PlaceGroup2DTopDown`, which now add the group's
+  behavior class after its `BoxCollider2D`, the same way `SpawnGroup` does.
+  Before this, no 2D group ever got its behavior. Those builders still leave
+  some groups out: the player, side-scroller `road`/`ground`, and `fx:`
+  groups. `atom_bindings.spawner_2d_skip_reason` reports their routes as
+  unattached, with the reason. A UI board (`locomotion='none'`) takes the
+  generic `SpawnGroup` branch in every game type.
 - **`self`.** The entity atoms' `entity` param reserves `self` (any case): the
   GameObject running the sequence. `Despawn self` lowers to
   `Destroy(gameObject);`. `SetHealth`/`EquipWeapon` `self` read the host.

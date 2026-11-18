@@ -5,7 +5,7 @@
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
         "src/unity_generator.py:2503",
-        "src/atom_bindings.py:313"
+        "src/atom_bindings.py:341"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -22,7 +22,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2503",
-        "src/atom_bindings.py:313"
+        "src/atom_bindings.py:341"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:31",
       "producer": "EntitySpec.atoms and behavior map",
@@ -32,7 +32,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2503",
-        "src/atom_bindings.py:313"
+        "src/atom_bindings.py:341"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -134,8 +134,8 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/atom_bindings.py:313",
-        "src/atom_bindings.py:464",
+        "src/atom_bindings.py:341",
+        "src/atom_bindings.py:495",
         "src/unity_generator.py:2503",
         "templates/unity/GameSequencer.cs.j2:12",
         "templates/unity/scene.unity.j2:1282"
@@ -251,7 +251,7 @@
       ],
       "provenance": [
         "src/atom_bindings.py:144",
-        "src/atom_bindings.py:298",
+        "src/atom_bindings.py:326",
         "src/atoms/controller.py:201",
         "src/micro/controller.py:1043",
         "src/micro/controller.py:162",
@@ -286,7 +286,7 @@
       ],
       "provenance": [
         "src/atom_bindings.py:144",
-        "src/atom_bindings.py:298",
+        "src/atom_bindings.py:326",
         "src/atoms/controller.py:230",
         "src/micro/controller.py:1043",
         "src/micro/controller.py:162",
