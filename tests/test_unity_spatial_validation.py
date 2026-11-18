@@ -12,9 +12,11 @@ from src.unity_spatial_pipeline import prepare_spatial_layout
 from src.unity_spatial_realization import realize_spatial_layout
 from src.unity_spatial_roles import derive_spatial_roles
 from src.unity_spatial_validation import (
+    _MAX_NAMED_FINDINGS,
     SPATIAL_VALIDATION_FORMAT,
     SPATIAL_VALIDATION_MANIFEST_FORMAT,
     SpatialValidationError,
+    _named_detail,
     validate_spatial_layout,
     write_spatial_validation,
 )
@@ -193,7 +195,16 @@ def test_validation_rejects_realized_cross_group_instance_overlap() -> None:
 
     assert report["status"] == "fail"
     assert group_check["status"] == "fail"
-    assert group_check["detail"] == "1 realized group footprint overlap(s)"
+    # The detail names the colliding pair, both points, the distance and the
+    # distance the two bodies need, so a failed run is diagnosable from its
+    # own report without a replay script.
+    point = "[" + ", ".join(
+        f"{value:.2f}" for value in player["instance_positions"][0]) + "]"
+    assert group_check["detail"] == (
+        "1 realized group footprint overlap(s): "
+        f"Player {point} x Crate {point} 0.00 m apart < 0.95 m required "
+        "(bodies 0.60 + 0.60 m, 0.25 m tolerance)"
+    )
 
 
 def test_validation_marks_airspace_reachability_as_not_applicable() -> None:
@@ -293,3 +304,56 @@ def test_validation_writer_hash_links_report(tmp_path: Path) -> None:
     manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     assert manifest_data["format"] == SPATIAL_VALIDATION_MANIFEST_FORMAT
     assert manifest_data["outputs"]["spatial_validation"]["sha256"]
+
+
+def test_instance_footprint_detail_names_the_group_points_and_distances() -> None:
+    """A within-group overlap names its group, its closest pair, the distance
+    and the required minimum. Run 01 of the 2026-11-17 neon batch needed a
+    replay script to learn that much."""
+    source = UnitySchema(
+        project_name="InstanceDetail",
+        company_name="Test",
+        description="A ground arena.",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="walk",
+        scenes=["Main"],
+        entities=[
+            EntitySpec(name="Player", kind="player", tag="Player"),
+            EntitySpec(name="TunnelWalls", kind="structure", placement="ring",
+                       count=2, scale=4.0),
+        ],
+    )
+    roles = derive_spatial_roles(source)
+    realized = realize_spatial_layout(source.model_copy(deep=True))
+    walls = next(row for row in realized["layout"]["entities"]
+                 if row["entity"] == "TunnelWalls")
+    x, y, z = walls["instance_positions"][0]
+    walls["instance_positions"] = [[x, y, z], [x + 4.0, y, z]]
+
+    report = validate_spatial_layout(
+        source, world_layout=realized, spatial_roles=roles
+    )
+    check = next(
+        row for row in report["checks"] if row["check"] == "instance_footprints"
+    )
+
+    assert check["status"] == "fail"
+    first = "[" + ", ".join(f"{value:.2f}" for value in (x, y, z)) + "]"
+    second = "[" + ", ".join(f"{value:.2f}" for value in (x + 4.0, y, z)) + "]"
+    assert check["detail"] == (
+        "1 within-group instance overlap(s): TunnelWalls (1 pair(s)) closest "
+        f"{first} x {second} 4.00 m apart < 4.60 m required"
+    )
+
+
+def test_named_detail_counts_every_finding_but_names_only_the_first() -> None:
+    findings = [f"pair{index}" for index in range(_MAX_NAMED_FINDINGS + 2)]
+    detail = _named_detail("10 overlap(s)", findings)
+
+    assert detail.startswith("10 overlap(s): pair0; pair1")
+    assert f"pair{_MAX_NAMED_FINDINGS - 1}" in detail
+    assert f"pair{_MAX_NAMED_FINDINGS}" not in detail
+    assert detail.endswith("; +2 more")
+    assert _named_detail("0 overlap(s)", []) == "0 overlap(s)"

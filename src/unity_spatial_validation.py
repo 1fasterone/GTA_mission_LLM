@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from .unity_layout import instance_body_radius, instance_min_spacing
 from .unity_reachability import flood_fill_reachable
 from .unity_schema import UnitySchema
 from .unity_spatial_fusion import (
@@ -92,6 +93,13 @@ def _points(row: Mapping[str, Any]) -> list[tuple[float, float, float]]:
     return points
 
 
+def _measured_footprint(row: Mapping[str, Any]) -> float:
+    try:
+        return float(row.get("measured_footprint_m") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _instance_footprint_radius(entity: Any, row: Mapping[str, Any]) -> float:
     """Return one realized instance's conservative XZ footprint radius.
 
@@ -100,15 +108,37 @@ def _instance_footprint_radius(entity: Any, row: Mapping[str, Any]) -> float:
     group's centroid can sit between several independent stops.  It therefore
     cannot decide whether two realized groups actually collide.  The layout
     compiler measures catalog footprints as a ground-plane diameter, while the
-    primitive fallback uses the same half-extent as its group packer.
+    primitive fallback uses the same half-extent as its group packer.  The
+    formula itself is the layout's own (``unity_layout.instance_body_radius``),
+    so the space the packer reserves and the space this check demands are one
+    number, not two that happen to agree.
     """
-    try:
-        measured = float(row.get("measured_footprint_m") or 0.0)
-    except (TypeError, ValueError):
-        measured = 0.0
-    if measured > 0.0:
-        return max(0.5, measured * float(entity.scale) * 0.5)
-    return max(0.5, float(entity.scale) * 0.6)
+    return instance_body_radius(float(entity.scale), _measured_footprint(row))
+
+
+def _instance_min_spacing(entity: Any, row: Mapping[str, Any]) -> float:
+    """Smallest legal distance between two instances of one group."""
+    return instance_min_spacing(float(entity.scale), _measured_footprint(row))
+
+
+# How many offending pairs a check names in its detail before summarising
+# the rest as a count. Every finding is still counted.
+_MAX_NAMED_FINDINGS = 8
+
+
+def _point_text(point: tuple[float, float, float]) -> str:
+    return "[" + ", ".join(f"{value:.2f}" for value in point) + "]"
+
+
+def _named_detail(summary: str, findings: list[str]) -> str:
+    """``summary`` plus the first findings by name, so a failed run says
+    which groups and positions collided without a replay script."""
+    if not findings:
+        return summary
+    named = findings[:_MAX_NAMED_FINDINGS]
+    rest = len(findings) - len(named)
+    return (summary + ": " + "; ".join(named)
+            + (f"; +{rest} more" if rest > 0 else ""))
 
 
 def _nearest_polyline_distance(x: float, z: float, points: list[list[float]]) -> float:
@@ -220,6 +250,7 @@ def validate_spatial_layout(
               "not applicable: wall_surface instances are ordered on X/Y")
     else:
         group_overlap = 0
+        group_findings: list[str] = []
         row_list = list(rows.items())
         entity_by_name = {str(entity.name): entity for entity in schema.entities}
         for index, (_left_name, left) in enumerate(row_list):
@@ -260,6 +291,11 @@ def validate_spatial_layout(
                     # unbaked group: without realized instances, the enclosing
                     # circles are the only deterministic geometry available.
                     group_overlap += 1
+                    group_findings.append(
+                        f"{_left_name} x {_right_name}: enclosing circles "
+                        f"{left_radius:.2f} + {right_radius:.2f} m overlap "
+                        "and a group has no baked instances"
+                    )
                     continue
 
                 left_instance_radius = _instance_footprint_radius(
@@ -268,37 +304,62 @@ def validate_spatial_layout(
                 right_instance_radius = _instance_footprint_radius(
                     entity_by_name[_right_name], right
                 )
-                if any(
-                    math.hypot(left_point[0] - right_point[0],
-                               left_point[2] - right_point[2]) + 0.25
-                    < left_instance_radius + right_instance_radius
-                    for left_point in left_points
-                    for right_point in right_points
-                ):
+                required = left_instance_radius + right_instance_radius
+                # The CLOSEST offending pair names the overlap; any pair
+                # under the tolerance makes it one.
+                closest: Optional[tuple[float, tuple[float, float, float],
+                                        tuple[float, float, float]]] = None
+                for left_point in left_points:
+                    for right_point in right_points:
+                        distance = math.hypot(left_point[0] - right_point[0],
+                                              left_point[2] - right_point[2])
+                        if distance + 0.25 < required and (
+                                closest is None or distance < closest[0]):
+                            closest = (distance, left_point, right_point)
+                if closest is not None:
                     group_overlap += 1
+                    group_findings.append(
+                        f"{_left_name} {_point_text(closest[1])} x "
+                        f"{_right_name} {_point_text(closest[2])} "
+                        f"{closest[0]:.2f} m apart < {required - 0.25:.2f} m "
+                        f"required (bodies {left_instance_radius:.2f} + "
+                        f"{right_instance_radius:.2f} m, 0.25 m tolerance)"
+                    )
         check(
             "group_footprints",
             "fail" if group_overlap else "pass",
-            f"{group_overlap} realized group footprint overlap(s)",
+            _named_detail(f"{group_overlap} realized group footprint overlap(s)",
+                          group_findings),
         )
 
         instance_overlap = 0
+        instance_findings: list[str] = []
         for name, row in rows.items():
             points = _points(row)
             entity = entity_by_name[name]
-            measured = row.get("measured_footprint_m")
-            minimum = (
-                float(measured) * entity.scale
-                if measured else max(0.5, entity.scale * 1.15)
-            )
+            minimum = _instance_min_spacing(entity, row)
+            pairs = 0
+            worst: Optional[tuple[float, tuple[float, float, float],
+                                  tuple[float, float, float]]] = None
             for index, left_point in enumerate(points):
                 for right_point in points[index + 1:]:
-                    if math.dist(left_point, right_point) + 0.01 < minimum:
-                        instance_overlap += 1
+                    distance = math.dist(left_point, right_point)
+                    if distance + 0.01 < minimum:
+                        pairs += 1
+                        if worst is None or distance < worst[0]:
+                            worst = (distance, left_point, right_point)
+            if worst is not None:
+                instance_overlap += pairs
+                instance_findings.append(
+                    f"{name} ({pairs} pair(s)) closest {_point_text(worst[1])} x "
+                    f"{_point_text(worst[2])} {worst[0]:.2f} m apart < "
+                    f"{minimum:.2f} m required"
+                )
         check(
             "instance_footprints",
             "fail" if instance_overlap else "pass",
-            f"{instance_overlap} within-group instance overlap(s)",
+            _named_detail(f"{instance_overlap} within-group instance overlap(s)",
+                          instance_findings),
         )
 
     bounds = ((world_layout.get("layout") or {}).get("world_bounds"))

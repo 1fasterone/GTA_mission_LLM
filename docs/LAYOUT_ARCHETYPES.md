@@ -241,11 +241,31 @@ brief spatial fact naming a depth/ceiling, else `_VOLUME_HEIGHT_DEFAULT` =
 
 ## ArenaPlane
 
-Unchanged. The original circle packer plus its path-route corridor variant. A
+The original circle packer plus its path-route corridor variant. A
 freely driven racing circuit is planar+ground, **not** a `path` axis — routes
 stay an ArenaPlane concern until the spline primitive lands.
-`tests/fixtures/arenaplane_baseline.json` locks its output byte-for-byte
-against the pre-archetype recording.
+`tests/fixtures/arenaplane_baseline.json` locks its output byte-for-byte. It
+was recorded before archetype selection existed. It has been re-recorded twice
+since: once when `EntitySpec.elevation` was added, and once when packing began
+to reserve instance bodies (below).
+
+### Packing contract (every primitive)
+
+The layout reserves space with the formulas the final spatial preflight
+(`src/unity_spatial_validation.py`) judges it by: `instance_body_radius` and
+`instance_min_spacing` in `src/unity_layout.py`. Both modules read those two
+functions, and the layout reserves nothing smaller.
+
+- A group carries two radii. `group_radius` is the **pattern** radius, where
+  its instance centres spread. A ring is drawn at it. `_packing_radius` is the
+  circle it **reserves**: its farthest baked instance plus one body, measured
+  from the real bake. `_pack_groups`, `_corridor_pack` and both scenery-stop
+  packers place on the second and never write it back into the first.
+- A ring is sized by the **chord** between neighbours, `2r·sin(π/n)`, never by
+  the arc. The chord is always the shorter of the two.
+- A group whose positions are already baked seeds the packer with
+  `_preplaced_circle`: its farthest instance plus one body, never just its
+  `group_radius`.
 
 ## UISurface
 
