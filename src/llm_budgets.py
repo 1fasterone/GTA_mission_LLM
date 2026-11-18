@@ -1,25 +1,38 @@
-"""Per-call completion budgets for the Pipeline LLM's small structured calls.
+"""Per-call completion budgets for the Pipeline LLM's structured calls.
 
-`lm_studio.max_tokens` in config.yaml (88,000 today) is the Step 3 schema-fill
-budget. A small Step 3.5 call that inherits it has no ceiling worth the name.
-On 2026-11-14 one NPC-dialog call (12 lines, about 700 tokens when healthy)
-generated about 76,000 tokens over 53 minutes at temperature 0 before it was
-stopped by hand. The micro-code path learned the same lesson earlier (1h54m
-burned on one subsystem), which is why it already had a cap of its own.
+`lm_studio.max_tokens` in config.yaml (88,000 today) is the client-wide
+default: a `chat()` that passes no `max_tokens` inherits it. That is no ceiling
+worth the name. 88,000 is above LM Studio's loaded context (47,360, see
+`lms ps`), so a runaway reply stops only at the context wall.
 
-Every small, structured Step 3.5 call takes its `max_tokens` from here, so the
-caps live in one place. A `Budget` is a fixed overhead plus a per-item allowance
-times the item count the caller asks for, clamped to [floor, ceiling]. The
-sizes are roughly 3-6x the completions measured in the LM Studio server logs of
-2026-11-12..14 (n = 3-23 replies per call type; none was cut off), so a healthy
-reply is never truncated and a degenerate one fails in minutes, not an hour.
+Two live runaways set the caps here:
+
+- 2026-11-14, Step 3.5: one NPC-dialog call (12 lines, about 700 tokens when
+  healthy) generated about 76,000 tokens over 53 minutes at temperature 0
+  before it was stopped by hand. The micro-code path learned the same lesson
+  earlier (1h54m burned on one subsystem), which is why it already had a cap.
+- 2026-11-17, Step 3: the Unity schema fill of neon E2E run 03 looped for 21
+  minutes before it was killed by hand. It wrote 118 KB and 235 `scripts`
+  entries. 193 of them repeated earlier entries, almost all from a cycle of 9
+  `...Manager` scripts, and the reply never reached `missions`.
+
+Every structured call takes its `max_tokens` from here, so the caps live in
+one place. A `Budget` is a fixed overhead plus a per-item allowance times the
+item count the caller asks for, clamped to [floor, ceiling]. The sizes are
+roughly 3-6x the completions measured in the LM Studio server logs (none of
+the measured replies was cut off), so a healthy reply is never truncated and a
+degenerate one fails within a bounded time instead of running to the context
+wall.
 
 A reply the server cut off at its cap (`finish_reason == "length"`) is never
-parsed as complete: `capped_chat` logs it loudly and returns None, and each
-caller already treats None/empty as "this attempt failed".
+parsed as complete. `capped_chat` logs it loudly and returns None, and each
+Step 3.5 caller already treats None/empty as "this attempt failed". The Unity
+schema fill raises `ReplyTruncatedError` instead, so the cut-off reply is
+recorded as a failed attempt and never reaches `extract_json`'s
+bracket-closing repair.
 
 Budgets bound generation length only. They never change what a healthy reply
-says, so Step 3.5 output and the deterministic Steps 4-7 are unaffected.
+says, so Step 3/3.5 output and the deterministic Steps 4-7 are unaffected.
 """
 from __future__ import annotations
 
@@ -64,6 +77,91 @@ MICRO_CODE_TOKENS = 6000
 
 # `extract_dialog_lines(count=0)` asks for the system prompt's default 3-6 lines.
 DIALOG_DEFAULT_LINES = 6
+
+# Step 3 Unity schema fill (src/unity_pipeline.py). Measured: 13 healthy fills in
+# the LM Studio logs of 2026-11-14 and 2026-11-17 (qwen3.5-9b, all
+# finish_reason=stop, 4.4-6.6 min each): median 7,993 / max 10,067 completion
+# tokens. Every November log gives n=21, median 7,123, the same max of 10,067.
+# About 3x that max -> 30,000. The largest measured prompt was 9,948 tokens, so
+# prompt plus cap (39,948) still fits the 47,360-token loaded context, and the
+# cap is reached before the context wall.
+SCHEMA_FILL_HEALTHY_MAX_TOKENS = 10_067
+SCHEMA_FILL_TOKENS = 30_000
+# The visual compile's own fill cap, older than SCHEMA_FILL_TOKENS. Its
+# cardinality is closed, so it is never allowed to exceed this.
+VISUAL_COMPILE_FILL_TOKENS = 32_000
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def schema_fill_tokens(*, visual_compile: bool, configured: Any = None) -> int:
+    """The Step 3 fill's `max_tokens`: the smallest cap that applies.
+
+    `SCHEMA_FILL_TOKENS` always applies. A visual compile also gets
+    `VISUAL_COMPILE_FILL_TOKENS`. `configured` is the client-wide
+    `lm_studio.max_tokens`, so a config that asks for less keeps it. A
+    measured budget lowers the client default and never raises it. A
+    `configured` value that is not a positive int (absent, or a test double's
+    attribute) adds no cap.
+    """
+    caps = [SCHEMA_FILL_TOKENS]
+    if visual_compile:
+        caps.append(VISUAL_COMPILE_FILL_TOKENS)
+    client_cap = _positive_int(configured)
+    if client_cap is not None:
+        caps.append(client_cap)
+    return min(caps)
+
+
+class ReplyTruncatedError(ValueError):
+    """The server cut a reply off at its cap (`finish_reason == "length"`).
+
+    A `ValueError`, so a caller's existing "this attempt failed" handling
+    catches it, and that caller retries. The reply is never parsed or
+    repaired. A cut-off reply that `extract_json` bracket-closes can still
+    validate as a schema with whole sections missing.
+    """
+
+    def __init__(self, purpose: str, max_tokens: int, chars: int, remedy: str):
+        self.purpose = purpose
+        self.max_tokens = max_tokens
+        self.chars = chars
+        super().__init__(
+            f"{purpose} reply cut off at its {max_tokens:,}-token cap "
+            f"(finish_reason=length) after {chars:,} chars; discarded unparsed. "
+            f"{remedy}"
+        )
+
+
+def schema_fill_truncated(max_tokens: int, chars: int) -> ReplyTruncatedError:
+    """The error for a Step 3 fill reply cut off at `max_tokens`.
+
+    The remedy depends on where the cap came from. A cap below the measured
+    budget came from the config, and the remedy is to raise the config to the
+    budget, which the fill never exceeds. At the budget, the reply was about
+    three times longer than any healthy fill measured, so it is a runaway.
+    Raising the cap only makes the loop longer.
+    """
+    if max_tokens < SCHEMA_FILL_TOKENS:
+        remedy = (
+            f"The cap came from lm_studio.max_tokens, which is below the "
+            f"measured Step 3 budget of {SCHEMA_FILL_TOKENS:,} (healthy fills "
+            f"measure up to {SCHEMA_FILL_HEALTHY_MAX_TOKENS:,} tokens). Raise "
+            f"lm_studio.max_tokens to {SCHEMA_FILL_TOKENS:,}. The fill never "
+            f"uses more than that."
+        )
+    else:
+        remedy = (
+            f"Healthy fills measure at most {SCHEMA_FILL_HEALTHY_MAX_TOKENS:,} "
+            f"tokens, so this is likely a runaway generation (usually a list "
+            f"repeating itself). Raising the cap only lengthens the loop. "
+            f"Re-run, or tighten the brief."
+        )
+    return ReplyTruncatedError("Step 3 schema fill", max_tokens, chars, remedy)
 
 
 def reply_truncated(llm: Any) -> bool:
