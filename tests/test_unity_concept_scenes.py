@@ -11,7 +11,7 @@ from src.unity_concept_scenes import (
     extract_named_scenes, inject_missing_concept_scenes,
     render_scene_checklist,
 )
-from src.unity_schema import SceneSpec, UnitySchema
+from src.unity_schema import SCENE_CAP, SceneSpec, UnitySchema
 
 # The numbered house form, wrapped continuation included — as prompts/dropzone.txt writes it.
 _DROPZONE_SCENES = (
@@ -135,18 +135,19 @@ def test_restored_scene_hosts_every_entity_group():
 
 
 def test_schema_cap_is_respected_and_named_loudly():
-    """schema.scenes is capped at 8 total. The budget already accounts for
-    the "Main" scene occupying one slot, so a 10-scene brief against a
-    schema that starts with only "Main" gets 7 restored (7 + Main = 8) and
-    3 named as overflow, not silently truncated."""
+    """schema.scenes is capped at SCENE_CAP total. The budget already accounts
+    for the "Main" scene occupying one slot, so a brief naming SCENE_CAP + 2
+    scenes against a schema that starts with only "Main" gets SCENE_CAP - 1
+    restored (+ Main = SCENE_CAP) and 3 named as overflow, not silently
+    truncated."""
     brief = "SCENES\n" + "".join(
-        f"{i}. Scene{i:02d} — an area\n" for i in range(1, 11))
+        f"{i}. Scene{i:02d} — an area\n" for i in range(1, SCENE_CAP + 3))
     schema = _schema(brief, scenes=["Main"], scene_specs=[])
     msgs = inject_missing_concept_scenes(schema)
-    assert len(schema.scenes) == 8
-    assert len(schema.scene_specs) == 7
-    overflow = [m for m in msgs if "capped at 8" in m]
-    assert overflow and "Scene08" in overflow[0]
+    assert len(schema.scenes) == SCENE_CAP
+    assert len(schema.scene_specs) == SCENE_CAP - 1
+    overflow = [m for m in msgs if f"capped at {SCENE_CAP}" in m]
+    assert overflow and f"Scene{SCENE_CAP:02d}" in overflow[0]
 
 
 def test_rescue_ignores_a_brief_with_no_scenes_section():
