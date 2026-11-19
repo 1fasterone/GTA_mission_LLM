@@ -268,7 +268,11 @@ def test_a_config_below_the_budget_keeps_its_own_cap(tmp_path):
 def test_the_fill_budget_is_pinned_to_the_measured_healthy_fills():
     assert len(_MEASURED_HEALTHY_FILLS) == 13
     assert statistics.median(_MEASURED_HEALTHY_FILLS) == 7993
-    assert max(_MEASURED_HEALTHY_FILLS) == SCHEMA_FILL_HEALTHY_MAX_TOKENS == 10067
+    assert max(_MEASURED_HEALTHY_FILLS) == 10067
+    # Those 13 are a subset of every healthy Unity fill in the logs since 2025-07
+    # (n=330, max 10,661). That wider max is the one the budget is sized from,
+    # and tests/test_schema_fill_budgets.py pins it.
+    assert max(_MEASURED_HEALTHY_FILLS) <= SCHEMA_FILL_HEALTHY_MAX_TOKENS == 10661
 
     # Changing the budget means re-measuring: update the samples above too.
     assert SCHEMA_FILL_TOKENS == 30_000
