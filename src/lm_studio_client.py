@@ -671,13 +671,22 @@ class LMStudioClient:
                 if self.last_finish_reason == "length":
                     # Server-confirmed, not inferred: the response really was
                     # cut off at max_tokens, not just malformed on its own.
+                    # Raising the cap is the wrong remedy for the usual cause.
+                    # A healthy reply is several times smaller than any cap in
+                    # src/llm_budgets.py, so a reply that reaches one is
+                    # usually a runaway (live 2026-11-17: a Step 3 fill
+                    # repeated a 9-script cycle for 21 minutes). A bigger cap
+                    # only makes the loop longer.
                     raise ValueError(
                         f"JSON truncated and could not be repaired.\n"
                         f"CONFIRMED: the server stopped generation at "
-                        f"max_tokens (finish_reason=length). Raise "
-                        f"lm_studio.max_tokens in config.yaml, or the "
-                        f"server's own loaded context (LM Studio: check "
-                        f"`lms ps`).\n"
+                        f"max_tokens (finish_reason=length). A reply that "
+                        f"reaches its cap is usually a runaway (the model "
+                        f"repeating a list) rather than a long answer. Read "
+                        f"the tail below for a repeating pattern, and re-run "
+                        f"or tighten the brief. Raise the cap only if the "
+                        f"call's measured healthy replies come near it "
+                        f"(src/llm_budgets.py).\n"
                         f"Tail: ...{text[-200:]}"
                     )
                 raise ValueError(
