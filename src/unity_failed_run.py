@@ -222,9 +222,11 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
 )
 
 _SCHEMA_FILL_REMEDY = (
-    "Every Step 3 fill attempt was rejected. Read fill_attempts: an empty or "
-    "truncated response points at the loaded model or its context window; a "
-    "field error points at the schema prompt."
+    "Every Step 3 fill attempt was rejected. Read fill_attempts. A "
+    "ReplyTruncatedError attempt was cut off at its token cap. That is usually "
+    "a runaway (look for a repeating list in raw_response), and raising the "
+    "cap only makes the loop longer. An empty response points at the loaded "
+    "model. A field error points at the schema prompt."
 )
 _UNCLASSIFIED_REMEDY = (
     "No deterministic rule matches this exception chain. Read the traceback, "

@@ -17,6 +17,8 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
+from .llm_budgets        import (ReplyTruncatedError, reply_truncated,
+                                 schema_fill_tokens, schema_fill_truncated)
 from .micro_pipeline     import to_pascal
 from .unity_schema       import (NORMALIZATION_META_KEY, UnityPackage,
                                  UnitySchema, UnityScript, is_embodied,
@@ -2034,6 +2036,17 @@ class UnityPipeline:
                 )
             _json_mode   = _mode == "json_object"
             _json_schema = response_format_schema()["json_schema"] if _mode == "json_schema" else None
+            # A measured ceiling for this one call (src/llm_budgets.py). The
+            # client-wide lm_studio.max_tokens (88,000) is above LM Studio's
+            # loaded context, so a runaway fill would otherwise stop only at
+            # the context wall (live: neon E2E run 03, 2026-11-17, 21 minutes,
+            # 235 `scripts` of which 193 repeated). A visual compile keeps its
+            # own 32,000 cap when that is smaller, and a config that asks for
+            # less than the budget keeps its own value.
+            fill_max_tokens = schema_fill_tokens(
+                visual_compile=visual_compile,
+                configured=getattr(self.llm, "max_tokens", None),
+            )
             clamp_msgs: list[str] = []
             last_err: Exception | None = None
             for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
@@ -2050,13 +2063,17 @@ class UnityPipeline:
                         thinking    = False,
                         json_mode   = _json_mode,
                         json_schema = _json_schema,
-                        # A visual compile has a closed asset cardinality
-                        # and its schema must reach the deterministic
-                        # post-schema chain.  Keep this one response bounded
-                        # even when the global LM budget is intentionally
-                        # generous for ordinary projects.
-                        max_tokens  = (32000 if visual_compile else None),
+                        max_tokens  = fill_max_tokens,
                     )
+                    # A reply the server cut off at the cap is a failed
+                    # attempt, never a schema. extract_json would
+                    # bracket-close it, and the clamp would trim a looped
+                    # list. The result validates with whole sections missing
+                    # (the run 03 reply validates with no entities and no
+                    # missions).
+                    if reply_truncated(self.llm):
+                        raise schema_fill_truncated(fill_max_tokens,
+                                                    len(schema_raw or ""))
                     schema_dict = self.llm.extract_json(schema_raw)
                     # Normalization reports are compiler-owned provenance. A
                     # schema-fill may not pre-author a clean bill of health or
@@ -2082,7 +2099,14 @@ class UnityPipeline:
                 except (ValueError, ValidationError) as exc:
                     last_err = exc
                     diagnostics.record_fill_attempt(attempt + 1, schema_raw, exc)
-                    if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
+                    if isinstance(exc, ReplyTruncatedError):
+                        # Loud on every attempt, the last one included. A
+                        # runaway costs minutes per attempt, so the log must
+                        # say so while the next attempt is running.
+                        retrying = attempt + 1 < self.SCHEMA_FILL_ATTEMPTS
+                        self._warn(f"schema fill attempt {attempt + 1}: {exc}"
+                                   + (" Retrying colder." if retrying else ""))
+                    elif attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
                         # The exception TYPE alone says nothing actionable —
                         # a truncated JSON, an empty response and a field-level
                         # validation error all print "ValueError" and each has
