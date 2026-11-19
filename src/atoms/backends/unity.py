@@ -325,10 +325,40 @@ def _spawn_entity(args: dict) -> str:
     )
 
 
+# The reserved subject token of the entity atoms (src/atoms/entity.py): an
+# `entity` arg of "self" (any case) is the GameObject running the sequence.
+# GameObject.Find("self") matches nothing, and an entity group's own name does
+# not match its spawned instances either (EntitySpawner names them
+# "<group>_<i>"), so the token is the only way a sequence can act on its host.
+SELF_TOKEN = "self"
+
+
+def _is_self(entity: str) -> bool:
+    return entity.strip().lower() == SELF_TOKEN
+
+
+def _subject_object(entity: str) -> str:
+    """The C# expression for the GameObject an entity arg names."""
+    return "gameObject" if _is_self(entity) else f"GameObject.Find(\"{entity}\")"
+
+
+def _named_or_host(entity: str) -> str:
+    """SetHealth/EquipWeapon's target. ``self`` is the host. ``Player`` keeps
+    its historical meaning (the host, through the ternary atom_bindings reads
+    as host-relative). Any other name is found by name."""
+    if _is_self(entity):
+        return _subject_object(entity)
+    return f"\"{entity}\" == \"Player\" ? gameObject : {_subject_object(entity)}"
+
+
 def _despawn(args: dict) -> str:
     entity = _s(args.get("entity", "Entity"))
+    if _is_self(entity):
+        # Destroy is deferred to the end of the frame, so the statement after
+        # it (the sequence's closing frame yield) still runs.
+        return "Destroy(gameObject);"
     return (
-        f"var _dgo = GameObject.Find(\"{entity}\");\n"
+        f"var _dgo = {_subject_object(entity)};\n"
         f"if (_dgo != null) Destroy(_dgo);"
     )
 
@@ -337,7 +367,7 @@ def _set_health(args: dict) -> str:
     entity = _s(args.get("entity", "Player"))
     value  = _f(args.get("value", 100))
     return (
-        f"var _hgo = \"{entity}\" == \"Player\" ? gameObject : GameObject.Find(\"{entity}\");\n"
+        f"var _hgo = {_named_or_host(entity)};\n"
         f"var _hs = _hgo?.GetComponent<HealthSystem>();\n"
         f"if (_hs != null) _hs.SetHealth({value});"
     )
@@ -347,7 +377,7 @@ def _equip_weapon(args: dict) -> str:
     entity = _s(args.get("entity", "Player"))
     weapon = _s(args.get("weapon", "pistol"))
     return (
-        f"var _wgo = \"{entity}\" == \"Player\" ? gameObject : GameObject.Find(\"{entity}\");\n"
+        f"var _wgo = {_named_or_host(entity)};\n"
         f"var _inv = _wgo?.GetComponent<Inventory>();\n"
         f"if (_inv != null) _inv.Equip(\"{weapon}\");"
     )

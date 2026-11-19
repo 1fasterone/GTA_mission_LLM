@@ -4,8 +4,8 @@
       "consumers": [
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2484",
-        "src/atom_bindings.py:297"
+        "src/unity_generator.py:2503",
+        "src/atom_bindings.py:341"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -13,7 +13,7 @@
     {
       "consumers": [
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2484"
+        "src/unity_generator.py:2503"
       ],
       "producer": "MicrogensSpec.atoms",
       "source": "src/unity_schema.py:1000"
@@ -21,35 +21,35 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2484",
-        "src/atom_bindings.py:297"
+        "src/unity_generator.py:2503",
+        "src/atom_bindings.py:341"
       ],
-      "descriptor_source": "src/atoms/behavior_map.py:29",
+      "descriptor_source": "src/atoms/behavior_map.py:31",
       "producer": "EntitySpec.atoms and behavior map",
       "source": "src/unity_schema.py:337"
     },
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2484",
-        "src/atom_bindings.py:297"
+        "src/unity_generator.py:2503",
+        "src/atom_bindings.py:341"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
     },
     {
       "consumers": [
-        "src/atoms/support_audit.py:147"
+        "src/atoms/support_audit.py:150"
       ],
       "producer": "Unity micro default atom descriptors",
-      "source": "src/atoms/behavior_map.py:122"
+      "source": "src/atoms/behavior_map.py:166"
     },
     {
       "consumers": [
         "src/micro/gta5_base.py:60"
       ],
       "producer": "GTA5 micro default atom descriptors",
-      "source": "src/atoms/behavior_map.py:232"
+      "source": "src/atoms/behavior_map.py:276"
     },
     {
       "consumers": [
@@ -134,9 +134,9 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/atom_bindings.py:297",
-        "src/atom_bindings.py:443",
-        "src/unity_generator.py:2484",
+        "src/atom_bindings.py:341",
+        "src/atom_bindings.py:495",
+        "src/unity_generator.py:2503",
         "templates/unity/GameSequencer.cs.j2:12",
         "templates/unity/scene.unity.j2:1282"
       ],
@@ -159,9 +159,9 @@
         "EntityBehavior"
       ],
       "provenance": [
-        "src/atoms/behavior_map.py:29",
+        "src/atoms/behavior_map.py:31",
         "src/unity_resolver.py:331",
-        "templates/unity/EntityBehavior.cs.j2:9",
+        "templates/unity/EntityBehavior.cs.j2:18",
         "templates/unity/EntitySpawner.cs.j2:495"
       ],
       "provider": "src/atoms/backends/unity.py:44",
@@ -187,7 +187,7 @@
         "templates/unity/compose/GameWiring.cs.j2:40",
         "templates/unity/scene.unity.j2:1384"
       ],
-      "provider": "src/atoms/backends/unity.py:781",
+      "provider": "src/atoms/backends/unity.py:811",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_compose.py:893",
@@ -211,7 +211,7 @@
       "provider": null,
       "retired_by": "src/micro/unity_base.py:72",
       "runtime_acceptance": "unverified",
-      "selection": "src/atoms/behavior_map.py:122",
+      "selection": "src/atoms/behavior_map.py:166",
       "template_owner_preserved": "ControllerPipeline"
     },
     {
@@ -250,8 +250,8 @@
         "ControllerPipeline"
       ],
       "provenance": [
-        "src/atom_bindings.py:128",
-        "src/atom_bindings.py:282",
+        "src/atom_bindings.py:144",
+        "src/atom_bindings.py:326",
         "src/atoms/controller.py:201",
         "src/micro/controller.py:1043",
         "src/micro/controller.py:162",
@@ -266,7 +266,7 @@
         "templates/unity/scene.unity.j2:1378",
         "templates/unity/scene.unity.j2:430"
       ],
-      "provider": "src/atoms/backends/unity.py:416",
+      "provider": "src/atoms/backends/unity.py:446",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/atoms/controller.py:19",
@@ -285,8 +285,8 @@
         "ControllerPipeline"
       ],
       "provenance": [
-        "src/atom_bindings.py:128",
-        "src/atom_bindings.py:282",
+        "src/atom_bindings.py:144",
+        "src/atom_bindings.py:326",
         "src/atoms/controller.py:230",
         "src/micro/controller.py:1043",
         "src/micro/controller.py:162",
@@ -300,7 +300,7 @@
         "templates/unity/scene.unity.j2:1378",
         "templates/unity/scene.unity.j2:430"
       ],
-      "provider": "src/atoms/backends/unity.py:432",
+      "provider": "src/atoms/backends/unity.py:462",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/atoms/controller.py:19",

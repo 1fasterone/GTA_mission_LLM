@@ -14,9 +14,11 @@ Every C# file written here comes from a production emitter:
   real input micro's emission;
 - ``IClimbingState``, rendered from the project generator's own template (the
   project generator, not the micro, emits it beside a climbing controller);
-- the ``GameSequencer`` and ``ArmoryBehavior`` that ``UnityProjectGenerator``
-  renders for a schema whose ``atoms`` is ``[Shoot]`` and whose one entity's
-  ``atoms`` is ``[Reload, Despawn]``.
+- the ``GameSequencer``, ``ArmoryBehavior`` and ``CoinBehavior`` that
+  ``UnityProjectGenerator`` renders for a schema whose ``atoms`` is ``[Shoot]``,
+  whose ``Armory`` entity's ``atoms`` is ``[Reload, Despawn self]`` (a spawn
+  trigger) and whose ``Coin`` entity's ``atoms`` is the canned ``collect``
+  sequence (a ``player_contact`` trigger, ``behavior_map.behavior_trigger``).
 
 The schemas are engineer-authored acceptance fixtures, never Pipeline LLM
 output. Only the Play Mode tests (tests/unity_firing_provider/) are
@@ -37,6 +39,12 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from src import firing_provider  # noqa: E402
 from src.atoms.base import AtomInvocation  # noqa: E402
+from src.atoms.behavior_map import (  # noqa: E402
+    TRIGGER_PLAYER_CONTACT,
+    TRIGGER_SPAWN,
+    behavior_trigger,
+    expand_behavior,
+)
 from src.intent.projectile import physical_projectile_contract_for  # noqa: E402
 from src.micro.controller import (  # noqa: E402
     VARIANTS,
@@ -100,12 +108,17 @@ RELOAD_OPTIONS = {
     }],
 }
 # The entity whose atoms route hosts the lowered Reload atom. Its sequence
-# ends in Despawn (of itself), so EntityBehavior runs it exactly once; a
+# ends in Despawn of itself, so EntityBehavior runs it exactly once; a
 # sequence that does not end in Despawn loops (one pass per frame since #302),
-# which would ask for a reload every frame.
+# which would ask for a reload every frame. `self` is the host: EntitySpawner
+# names a spawned instance "<group>_<i>", so the group name finds nothing.
 RELOAD_ENTITY = "Armory"
 RELOAD_ENTITY_ATOMS = [AtomInvocation(atom="Reload"),
-                       AtomInvocation(atom="Despawn", args={"entity": RELOAD_ENTITY})]
+                       AtomInvocation(atom="Despawn", args={"entity": "self"})]
+# The contact-collect entity: the canned `collect` sequence, exactly as
+# expand_behaviors writes it, so it runs on Player contact and never at spawn.
+CONTACT_ENTITY = "Coin"
+CONTACT_ENTITY_ATOMS = expand_behavior("collect")
 
 _INTERFACE = re.compile(r"^public interface IInputReader\s*\{.*?^\}", re.S | re.M)
 _CONFIG = {
@@ -212,7 +225,9 @@ def emit(project_path: Path) -> dict[str, str]:
                          render_pipeline="URP", scenes=["Main"],
                          atoms=[AtomInvocation(atom="Shoot")],
                          entities=[EntitySpec(name=RELOAD_ENTITY, kind="prop", count=1,
-                                              atoms=list(RELOAD_ENTITY_ATOMS))])
+                                              atoms=list(RELOAD_ENTITY_ATOMS)),
+                                   EntitySpec(name=CONTACT_ENTITY, kind="pickup", count=1,
+                                              atoms=list(CONTACT_ENTITY_ATOMS))])
     files = generator.generate(schema, {}, composed_units=controller_units[:1])
     for source, atom in (("atoms", "Shoot"), (f"entities[{RELOAD_ENTITY}].atoms", "Reload")):
         route = generator.last_atom_bindings.route(source)
@@ -233,6 +248,21 @@ def emit(project_path: Path) -> dict[str, str]:
     if (behavior_source.count("StartCoroutine(Run())") != 1
             or "while (true)" in behavior_source):
         raise RuntimeError(f"{behavior} repeats its sequence; the acceptance needs one run")
+    if (behavior_trigger(RELOAD_ENTITY_ATOMS) != TRIGGER_SPAWN
+            or "private void Start() => StartCoroutine(Run());" not in behavior_source
+            or "Destroy(gameObject);" not in behavior_source):
+        raise RuntimeError(f"{behavior} does not run once at spawn and despawn its host")
+    contact = entity_behavior_class_name(CONTACT_ENTITY)
+    contact_source = files[f"{PROJECT}/Assets/Scripts/{contact}.cs"]
+    route = generator.last_atom_bindings.route(f"entities[{CONTACT_ENTITY}].atoms")
+    if (behavior_trigger(CONTACT_ENTITY_ATOMS) != TRIGGER_PLAYER_CONTACT
+            or route is None or route.trigger != "player_contact"
+            or "private void OnTriggerEnter(Collider other)" not in contact_source
+            or "=> StartCoroutine(Run())" in contact_source
+            or contact_source.count("StartCoroutine(Run())") != 1
+            or "Destroy(gameObject);" not in contact_source):
+        raise RuntimeError(f"{contact} does not run once on Player contact")
+    written[f"{contact}.cs"] = contact_source
 
     destination = project_path / DESTINATION
     destination.mkdir(parents=True, exist_ok=True)

@@ -276,6 +276,25 @@ def entity_behavior_class_name(entity_name: str) -> str:
     return ("".join(p.capitalize() for p in parts) or "Entity") + "Behavior"
 
 
+# Game types whose entities carry Collider2D (EntitySpawner's 2D spawn paths).
+# Every other type is 3D physics. Same split EnemyAI.cs.j2 uses, so a 3D
+# project never references Physics2DModule (CS1069).
+_PHYSICS_2D_GAME_TYPES = ("2D", "2d_topdown")
+
+
+def entity_behavior_entry(atoms: list, game_type: str) -> dict[str, object]:
+    """EntityBehavior.cs.j2's entry-point context: when the sequence starts
+    (``behavior_trigger``) and which physics a contact trigger listens on.
+    Raises on a trigger the template has no entry point for."""
+    from .atoms.behavior_map import (TRIGGER_DEATH, TRIGGER_PLAYER_CONTACT,
+                                     TRIGGER_SPAWN, behavior_trigger)
+
+    trigger = behavior_trigger(atoms)
+    if trigger not in (TRIGGER_SPAWN, TRIGGER_PLAYER_CONTACT, TRIGGER_DEATH):
+        raise ValueError(f"EntityBehavior.cs.j2 has no entry point for trigger {trigger!r}")
+    return {"trigger": trigger, "physics_2d": game_type in _PHYSICS_2D_GAME_TYPES}
+
+
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
 # This digest is a COMPATIBILITY CONTRACT, not an identity hash: every project
@@ -3242,6 +3261,7 @@ class UnityProjectGenerator:
                 eb_path   = f"{pn}/Assets/Scripts/{cls}.cs"
                 files[eb_path]           = self._render("EntityBehavior.cs.j2", {
                     **base_ctx,
+                    **entity_behavior_entry(e.atoms, schema.game_type),
                     "entity":       e,
                     "class_name":   cls,
                     "atom_body":    body,
