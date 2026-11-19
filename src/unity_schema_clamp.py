@@ -17,8 +17,13 @@ under `schema.meta["schema_clamp"]`. Quietly shipping 24 of 155 systems is the
 silent default this repo forbids; saying which 131 are not in the game is not.
 
 A list already inside its cap is left exactly as the model wrote it. Duplicate
-names below the cap are the programmatic fixer's job (unity_pipeline.
-_programmatic_fix owns script naming), not this pass's.
+names below the cap are the Step 5 fixers' job, not this pass's
+(unity_pipeline._programmatic_fix owns script naming,
+unity_entity_names.disambiguate_entity_names owns entity names).
+
+`schema.scenes` has no Pydantic cap. :func:`clamp_scene_names` applies the
+same SCENE_CAP to it from the programmatic fixer and records the drop beside
+these records, so neither scene list is ever truncated silently.
 
 Runs between `llm.extract_json` and `UnitySchema.model_validate`
 (src/unity_pipeline.py). Deterministic — no LLM, no network, no reordering
@@ -27,7 +32,20 @@ beyond the model's own.
 
 from __future__ import annotations
 
-from .unity_schema import UnitySchema
+import re
+from typing import Any, Optional
+
+from .unity_schema import SCENE_CAP, UnitySchema
+
+SCHEMA_CLAMP_META_KEY = "schema_clamp"
+# `schema.scenes` is a bare name list with no Pydantic cap of its own. The
+# programmatic fixer caps it at SCENE_CAP (clamp_scene_names, below) and
+# records the drop under this key, next to the Step 3 clamp's own records.
+SCENES_RECORD_KEY = "scenes"
+
+# SceneSpec._clean_name's rule, so a dropped spec is recorded under the scene
+# name the rest of the compiler would have used for it.
+_SCENE_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 # Capped list field -> the keys that identify one entry, in priority order. Two
 # entries with the same identity are the same thing said twice and the first
@@ -178,6 +196,12 @@ def clamp_capped_lists(schema_dict: dict) -> list[str]:
             "duplicates_removed": dup_counts,
             "dropped":            drop_labels,
         }
+        if field == "scene_specs":
+            # What each dropped scene hosted. The membership pass reads it to
+            # name the clamp as the reason an entity listed only there spawns
+            # nowhere (unity_scene_membership._abstention). Meta only: nothing
+            # is placed from it.
+            record[field]["dropped_entities"] = _spec_entities(deduped[cap:])
         msgs.append(_message(field, cap, len(raw), dup_counts, drop_labels))
 
     if record:
@@ -185,5 +209,121 @@ def clamp_capped_lists(schema_dict: dict) -> list[str]:
         if not isinstance(meta, dict):
             meta = {}
             schema_dict["meta"] = meta
-        meta["schema_clamp"] = record
+        meta[SCHEMA_CLAMP_META_KEY] = record
     return msgs
+
+
+def _spec_entities(specs: list) -> dict[str, list[str]]:
+    """{scene name: the entity names it listed} for raw scene_spec dicts that
+    listed any. A spec that hosted every group (no list) has no entry: its
+    groups are hosted by every other subset-less scene as well."""
+    out: dict[str, list[str]] = {}
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        name = _SCENE_NAME_RE.sub("", str(spec.get("name") or ""))
+        listed = spec.get("entities")
+        if not name or not isinstance(listed, list):
+            continue
+        names = [str(n) for n in listed if isinstance(n, str) and n.strip()]
+        if names:
+            out.setdefault(name, []).extend(names)
+    return out
+
+
+def clamp_scene_names(schema: Any) -> list[str]:
+    """Cap ``schema.scenes`` at SCENE_CAP, IN PLACE, and record any drop.
+
+    The caller has already cleaned and de-duplicated the names. A list inside
+    the cap is left untouched and nothing is recorded. Over it, the first
+    SCENE_CAP names are kept. "Main" is never reported as dropped, because the
+    fixer re-inserts it first whatever its position (it is the compiler's hub).
+    The record has the Step 3 clamp's shape plus ``dropped_entities`` (what
+    each dropped scene's spec listed) and the console ``message``. It goes to
+    ``schema.meta["schema_clamp"]["scenes"]``. Returns that message, or [].
+    """
+    scenes = list(getattr(schema, "scenes", None) or [])
+    if len(scenes) <= SCENE_CAP:
+        return []
+    kept = scenes[:SCENE_CAP]
+    dropped = [s for s in scenes[SCENE_CAP:] if s != "Main"]
+    schema.scenes = kept
+    if not dropped:
+        return []
+    dropped_set = set(dropped)
+    dropped_entities: dict[str, list[str]] = {}
+    for spec in getattr(schema, "scene_specs", None) or []:
+        if spec.name in dropped_set and spec.entities:
+            dropped_entities.setdefault(spec.name, []).extend(spec.entities)
+    message = (
+        f"the schema declares {len(scenes)} `scenes` against a cap of "
+        f"{SCENE_CAP} — kept the first {SCENE_CAP} and DROPPED "
+        f"{len(dropped)}: {_names(dropped)}. Those scenes are NOT in the game"
+        + (f", and neither is any entity listed only there "
+           f"({_names(sorted({n for v in dropped_entities.values() for n in v}))})"
+           if dropped_entities else "")
+        + ". Trim the brief's scene list, or raise SCENE_CAP in "
+        "src/unity_schema.py. Full record: schema.meta['schema_clamp']['scenes']."
+    )
+    meta = schema.meta if isinstance(getattr(schema, "meta", None), dict) else None
+    if meta is not None:
+        clamp = meta.get(SCHEMA_CLAMP_META_KEY)
+        if not isinstance(clamp, dict):
+            clamp = {}
+            meta[SCHEMA_CLAMP_META_KEY] = clamp
+        clamp[SCENES_RECORD_KEY] = {
+            "cap":                SCENE_CAP,
+            "received":           len(scenes),
+            "kept":               len(kept),
+            "duplicates_removed": {},
+            "dropped":            dropped,
+            "dropped_entities":   dropped_entities,
+            "stage":              "5_programmatic_fix",
+            "message":            message,
+        }
+    return [message]
+
+
+def scene_cap_warnings(schema: Any) -> list[str]:
+    """The loud line for a ``scenes`` cap drop recorded on this schema, or [].
+
+    Read from the record rather than returned by the fixer, so the live Step 5
+    and the ``unity-validate`` replay say the same thing about one schema."""
+    meta = schema.meta if isinstance(getattr(schema, "meta", None), dict) else {}
+    clamp = meta.get(SCHEMA_CLAMP_META_KEY)
+    row = clamp.get(SCENES_RECORD_KEY) if isinstance(clamp, dict) else None
+    if isinstance(row, dict) and row.get("dropped") and row.get("message"):
+        return [f"[scene.cap] {row['message']}"]
+    return []
+
+
+def scene_cap_drops(schema: Any) -> list[dict[str, Any]]:
+    """One row per scene a scene cap dropped, across both records (the Step 3
+    ``scene_specs`` clamp, then the Step 5 ``scenes`` cap), in record order:
+    ``{"scene", "cap", "record", "entities"}``. ``entities`` is what the
+    dropped scene listed, or None when the record predates
+    ``dropped_entities`` (a capture clamped before SCENE_CAP existed), in which
+    case what it listed is unknown. [] when no scene was dropped."""
+    meta = schema.meta if isinstance(getattr(schema, "meta", None), dict) else {}
+    clamp = meta.get(SCHEMA_CLAMP_META_KEY)
+    if not isinstance(clamp, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in ("scene_specs", SCENES_RECORD_KEY):
+        row = clamp.get(key)
+        if not isinstance(row, dict):
+            continue
+        listed = row.get("dropped_entities")
+        for scene in row.get("dropped") or []:
+            name = _SCENE_NAME_RE.sub("", str(scene or ""))
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            entities: Optional[list[str]] = None
+            if isinstance(listed, dict):
+                raw = listed.get(name)
+                entities = [str(n) for n in raw] if isinstance(raw, list) else []
+            rows.append({"scene": name, "cap": row.get("cap"), "record": key,
+                         "entities": entities})
+    return rows
