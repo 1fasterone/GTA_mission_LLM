@@ -4,6 +4,9 @@
 
 # ── Force LF for files that must stay LF even on a Windows checkout ──
 *.sh   text eol=lf
+# Verbatim LLM captures: tests/fixtures/README.md records their sha256, which a
+# CRLF checkout would break.
+tests/fixtures/*.prediction.json text eol=lf
 
 # ── Force CRLF for Windows-only scripts ─────────────────────────────
 *.bat  text eol=crlf

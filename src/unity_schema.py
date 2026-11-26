@@ -88,6 +88,15 @@ _VALID_WEATHER:       frozenset[str] = frozenset(get_args(WeatherType))
 _VALID_WORLD_SCALE:   frozenset[str] = frozenset(get_args(WorldScale))
 _VALID_AI_BEH:        frozenset[str] = frozenset(get_args(AIBehaviorKind))
 
+# The one scene cap. `UnitySchema.scene_specs` enforces it, the Step 3 clamp
+# reads it back off that field (unity_schema_clamp._cap), the programmatic
+# fixer applies it to `scenes`, the concept-scene rescue budgets against it and
+# the Step 3 prompt states it. The neon_fugitive brief names 9 scenes (six
+# districts, a menu, a boss arena, credits); the old cap of 8 dropped its boss
+# arena in two of eleven live runs and orphaned the entities listed there.
+# The compiler-owned "Main" hub is inserted after the cap and is not counted.
+SCENE_CAP = 12
+
 # The schema deliberately accepts a small number of common aliases so the
 # pipeline can recover from harmless model vocabulary drift.  A fallback to a
 # default is different: it changes the game the user asked for.  Keep those
@@ -1290,7 +1299,7 @@ class UnitySchema(BaseModel):
 
     # ── Legacy/existing collections (kept for backward compat) ────────────────
     scenes:            list[str]             = Field(default_factory=lambda: ["Main", "MainMenu"])
-    scene_specs:       list[SceneSpec]       = Field(default_factory=list, max_length=8)
+    scene_specs:       list[SceneSpec]       = Field(default_factory=list, max_length=SCENE_CAP)
     features:          list[str]             = Field(default_factory=list)
     packages:          list[UnityPackage]    = Field(default_factory=list, max_length=20)
     scripts:           list[UnityScript]     = Field(default_factory=list, max_length=24)

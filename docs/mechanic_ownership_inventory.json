@@ -8,7 +8,7 @@
         "src/atom_bindings.py:341"
       ],
       "producer": "UnitySchema.atoms",
-      "source": "src/unity_schema.py:1301"
+      "source": "src/unity_schema.py:1310"
     },
     {
       "consumers": [
@@ -16,7 +16,7 @@
         "src/unity_generator.py:2503"
       ],
       "producer": "MicrogensSpec.atoms",
-      "source": "src/unity_schema.py:1000"
+      "source": "src/unity_schema.py:1009"
     },
     {
       "consumers": [
@@ -26,7 +26,7 @@
       ],
       "descriptor_source": "src/atoms/behavior_map.py:31",
       "producer": "EntitySpec.atoms and behavior map",
-      "source": "src/unity_schema.py:337"
+      "source": "src/unity_schema.py:346"
     },
     {
       "consumers": [
@@ -35,7 +35,7 @@
         "src/atom_bindings.py:341"
       ],
       "producer": "UnityScript.atoms",
-      "source": "src/unity_schema.py:1221"
+      "source": "src/unity_schema.py:1230"
     },
     {
       "consumers": [
@@ -143,7 +143,7 @@
       "provider": "src/atoms/backends/unity.py:294",
       "retired_by": null,
       "runtime_acceptance": "unverified",
-      "selection": "src/unity_schema.py:1301",
+      "selection": "src/unity_schema.py:1310",
       "template_owner_preserved": null
     },
     {

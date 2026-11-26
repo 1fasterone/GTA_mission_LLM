@@ -179,7 +179,11 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
      "ran after _reconcile_scene_specs added the entity. Compare "
      "schema.meta.scene_membership in the saved schema, give the entity a "
      "scene in scene_specs[].entities or remove it, then replay with "
-     "unity-validate."),
+     "unity-validate. A 'duplicate entity names' refusal reaches it only when "
+     "the Step 5 entity-name pass (src/unity_entity_names.py) could not prove "
+     "which group each name means: read schema.meta.entity_names.abstentions, "
+     "give each group its own name in entities[] and in every scene_spec or "
+     "reference that means it, or merge identical groups, then replay."),
     ("SceneInputError", "authored_scene",
      "The Scene Compiler layout could not be read or bound. Check the layout "
      "file and its model paths (docs/SCENE_COMPILER.md)."),
@@ -218,9 +222,11 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
 )
 
 _SCHEMA_FILL_REMEDY = (
-    "Every Step 3 fill attempt was rejected. Read fill_attempts: an empty or "
-    "truncated response points at the loaded model or its context window; a "
-    "field error points at the schema prompt."
+    "Every Step 3 fill attempt was rejected. Read fill_attempts. A "
+    "ReplyTruncatedError attempt was cut off at its token cap. That is usually "
+    "a runaway (look for a repeating list in raw_response), and raising the "
+    "cap only makes the loop longer. An empty response points at the loaded "
+    "model. A field error points at the schema prompt."
 )
 _UNCLASSIFIED_REMEDY = (
     "No deterministic rule matches this exception chain. Read the traceback, "

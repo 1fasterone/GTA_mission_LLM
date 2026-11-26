@@ -47,7 +47,8 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .unity_layout_archetype import pick_player_entity
-from .unity_schema import _NEVER_PLAYER_KINDS
+from .unity_schema import _NEVER_PLAYER_KINDS, SCENE_CAP
+from .unity_schema_clamp import scene_cap_drops
 
 SCENE_MEMBERSHIP_META_KEY = "scene_membership"
 SCENE_MEMBERSHIP_FORMAT = "unity-scene-membership/v1"
@@ -247,13 +248,42 @@ def _abstention(schema: Any, entity: Any, *, player: Optional[Any],
                                f"({mission.id}) runs in {scenes}, and none of "
                                "those scenes takes added groups (no spec, or "
                                "an explicitly empty list)")
+    remedy = ("name it in a scene_specs[].entities list, or remove it from "
+              "entities. Step 3 must give every entity a scene.")
+    # Step 3 DID give it a scene, and the scene cap took that scene away. Say
+    # so: the remedy is the cap or the brief, not the entity. Still never a
+    # placement: the dropped scene is gone, and no other scene is guessed.
+    # A record older than `dropped_entities` names the dropped scene but not
+    # what it listed: say that it MAY be the cause, and that the record cannot
+    # tell.
+    drops = scene_cap_drops(schema)
+    listed_in = [row for row in drops
+                 if row["entities"] is not None and entity.name in row["entities"]]
+    unknown = [row for row in drops if row["entities"] is None]
+    if listed_in:
+        missing.insert(0, "scene cap: Step 3 listed it only in "
+                          f"{[row['scene'] for row in listed_in]}, which the "
+                          f"scene cap ({listed_in[0]['cap']}) dropped "
+                          f"(meta.schema_clamp.{listed_in[0]['record']})")
+    elif unknown:
+        missing.insert(0, "scene cap: the scene cap "
+                          f"({unknown[0]['cap']}) dropped "
+                          f"{[row['scene'] for row in unknown]} "
+                          f"(meta.schema_clamp.{unknown[0]['record']}), and "
+                          "that record predates dropped_entities, so it cannot "
+                          "say whether they listed this entity. They may have")
+    cause = listed_in or unknown
+    if cause:
+        remedy = (f"raise SCENE_CAP (src/unity_schema.py, now {SCENE_CAP}) or "
+                  "trim the brief's scene list, so that "
+                  f"{', '.join(row['scene'] for row in cause)} fits; or "
+                  + remedy)
     return {
         "entity": entity.name,
         "kind": entity.kind,
         "tag": entity.tag,
         "missing": missing,
-        "remedy": ("name it in a scene_specs[].entities list, or remove it from "
-                   "entities. Step 3 must give every entity a scene."),
+        "remedy": remedy,
     }
 
 
