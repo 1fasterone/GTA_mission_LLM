@@ -33,8 +33,15 @@ that never reaches `extract_json`'s bracket-closing repair. That repair is not
 hypothetical: a GTA5 fill and an NPC-dialog micro fill cut off in July 2026
 both validate as schemas with whole sections missing.
 
+The Step 2 concept is the one call per pipeline that reasons, so a reasoning
+loop there also ran to the context wall. The GTA5 and micro concepts each have
+a `ConceptBudget`, and a concept cut off at its cap raises
+`ReplyTruncatedError` too: a brief that stops mid-sentence, or one left empty
+because the cap landed inside the reasoning, is never filled as if it were
+whole.
+
 Budgets bound generation length only. They never change what a healthy reply
-says, so Step 3/3.5 output and the deterministic Steps 4-7 are unaffected.
+says, so Step 2/3/3.5 output and the deterministic Steps 4-7 are unaffected.
 """
 from __future__ import annotations
 
@@ -107,12 +114,12 @@ def _positive_int(value: Any) -> Optional[int]:
 
 
 @dataclass(frozen=True)
-class FillBudget:
-    """One Step 3 schema fill's completion cap, sized from its healthy fills.
+class _CallBudget:
+    """One Pipeline LLM call's completion cap, sized from its healthy replies.
 
-    `healthy_max` is the largest completion measured for this fill with
-    reasoning off. `tokens` is about 3x that, so a healthy fill is never cut
-    and a runaway stops below the context wall.
+    `purpose` names the call in a `ReplyTruncatedError`. `healthy_max` is the
+    largest completion measured for the call in the LM Studio server logs.
+    `tokens` is the cap sized from it.
     """
 
     purpose: str
@@ -120,10 +127,10 @@ class FillBudget:
     healthy_max: int
 
     def cap(self, *, configured: Any = None, extra: tuple[int, ...] = ()) -> int:
-        """The fill's `max_tokens`: the smallest cap that applies.
+        """The call's `max_tokens`: the smallest cap that applies.
 
         `tokens` always applies, and so does each value in `extra` (the visual
-        compile's own cap). `configured` is the client-wide
+        compile's own fill cap). `configured` is the client-wide
         `lm_studio.max_tokens`, so a config that asks for less keeps it. A
         measured budget lowers the client default and never raises it. A
         `configured` value that is not a positive int (absent, or a test
@@ -134,6 +141,16 @@ class FillBudget:
         if client_cap is not None:
             caps.append(client_cap)
         return min(caps)
+
+
+@dataclass(frozen=True)
+class FillBudget(_CallBudget):
+    """One Step 3 schema fill's completion cap, sized from its healthy fills.
+
+    `healthy_max` is the largest completion measured for this fill with
+    reasoning off. `tokens` is about 3x that, so a healthy fill is never cut
+    and a runaway stops below the context wall.
+    """
 
     def truncated(self, max_tokens: int, chars: int) -> ReplyTruncatedError:
         """The error for this fill's reply cut off at `max_tokens`.
@@ -166,6 +183,48 @@ class FillBudget:
         return ReplyTruncatedError(self.purpose, max_tokens, chars, remedy)
 
 
+@dataclass(frozen=True)
+class ConceptBudget(_CallBudget):
+    """One Step 2 concept's completion cap, sized from its healthy concepts.
+
+    The concept reasons (`thinking=True`), so most of each reply is reasoning.
+    `healthy_max` is the largest completion measured for this concept,
+    reasoning included. `tokens` is about 1.5x that and at least 2x the median.
+    The fills get 3x, but qwen3.5-9b generates about 22 tok/s, so 3x of a
+    concept would let a runaway run for a quarter of an hour.
+    """
+
+    def truncated(self, max_tokens: int, chars: int) -> ReplyTruncatedError:
+        """The error for this concept's reply cut off at `max_tokens`.
+
+        `chars` is 0 when the cap landed inside the reasoning and no brief was
+        written. As with the fills, the remedy depends on where the cap came
+        from. A cap below the measured budget came from the config: all eight
+        GTA5 concepts ever cut off (2026-05) were cut by a config cap of 2,000
+        or 4,096, below what a healthy concept needs. At the budget, the reply
+        outran every healthy concept measured, so it is a runaway, or a
+        different model that reasons longer than the one the budget was sized
+        for.
+        """
+        if max_tokens < self.tokens:
+            remedy = (
+                f"The cap came from lm_studio.max_tokens, which is below the "
+                f"measured budget of {self.tokens:,} for this concept (healthy "
+                f"concepts measure up to {self.healthy_max:,} tokens, reasoning "
+                f"included). Raise lm_studio.max_tokens to {self.tokens:,}. The "
+                f"concept never uses more than that."
+            )
+        else:
+            remedy = (
+                f"Healthy concepts measure at most {self.healthy_max:,} tokens, "
+                f"reasoning included, so this is likely a runaway (usually "
+                f"reasoning that loops). Raising the cap only lengthens the "
+                f"loop. Re-run. A different model that reasons longer needs "
+                f"this budget re-measured in src/llm_budgets.py."
+            )
+        return ReplyTruncatedError(self.purpose, max_tokens, chars, remedy)
+
+
 # The three Step 3 schema fills. Measured in every LM Studio server log from
 # 2025-07 to 2026-11-17 by one rule. Each "Generated prediction" is paired with
 # its "Running chat completion". A reply counts for a fill by its top-level keys:
@@ -194,6 +253,36 @@ GTA5_FILL = FillBudget("GTA5 Step 3 mission fill", tokens=3_600, healthy_max=1_2
 # The one micro fill ever cut off (NPC dialog, 2026-07-08) spent 7,866 of its
 # 8,192 tokens reasoning.
 MICRO_FILL = FillBudget("micro Step 3 fill", tokens=4_500, healthy_max=1_481)
+
+# The GTA5 and micro Step 2 concepts. Until these caps both passed no
+# `max_tokens`, so they inherited lm_studio.max_tokens (88,000 in the E2E
+# config) and a reasoning loop stopped only at the context wall. Measured in
+# every LM Studio server log from 2025-07 to 2026-11-25 by one rule. A reply
+# counts as a concept when it spent more than 1 reasoning token
+# (`reasoning_effort=none` reports exactly 1) and answered in prose, not JSON
+# or C#. It counts for a pipeline by the role the model restates in its
+# reasoning: "GTA5 mission writer" (src/prompts.py), or "Senior Unity
+# Engineer" / "Senior GTA5 ScriptHookVDotNet (SHVDN3) scripter"
+# (src/micro/unity_base.py, src/micro/gta5_base.py). Healthy means
+# finish_reason is stop. Sized for qwen3.5-9b, the configured model. The logs of
+# 2026-10/11 alone hold no GTA5 concept and only 12 micro concepts, so the whole
+# history is used.
+#
+# GTA5 mission concept (src/pipeline.py): n=60 (2026-05-14 .. 2026-09-13),
+# median 4,299, max 6,389, largest prompt 948. 9,500 is 1.49x the max and 2.2x
+# the median. At the 22.4 tok/s the server logged for a GTA5 concept on
+# 2026-05-14, a runaway ends after about 7 minutes. The 8
+# GTA5 concepts ever cut off were cut inside their reasoning by config caps of
+# 2,000 and 4,096 (2026-05-14/15), while healthy concepts those two days ran
+# to 5,211. A different model, qwythos-9b (n=8, 2026-09), once wrote 11,201.
+GTA5_CONCEPT = ConceptBudget("GTA5 Step 2 mission concept", tokens=9_500, healthy_max=6_389)
+# Micro concept (src/micro_pipeline.py, every standalone Unity and GTA5 micro):
+# n=52 (2026-05-28 .. 2026-10-26), median 2,765.5, max 5,299, largest prompt
+# 602.
+# 8,000 is 1.51x the max and 2.9x the median, so a runaway ends after about 6
+# minutes. No micro concept was ever cut off. phi-4-reasoning-plus (n=5,
+# 2026-06) peaked at 2,503.
+MICRO_CONCEPT = ConceptBudget("micro Step 2 concept", tokens=8_000, healthy_max=5_299)
 
 # Names the Unity fill and its tests import.
 SCHEMA_FILL_TOKENS = UNITY_FILL.tokens
