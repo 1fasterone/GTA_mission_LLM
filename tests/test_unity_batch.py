@@ -166,6 +166,11 @@ def _reload(batch: Batch) -> Batch:
     return Batch.load(batch.path)
 
 
+def _flat(text: str) -> str:
+    """CLI output with rich's line wrapping undone (CI renders at 80 columns)."""
+    return " ".join(text.split())
+
+
 # ── creating, running, resuming ────────────────────────────────────────────────
 
 def test_a_batch_runs_some_now_and_the_rest_later(tmp_path):
@@ -424,12 +429,12 @@ def lock_holder():
     """A real second process holding a batch's driver lock, killed hard at the end."""
     procs: list[subprocess.Popen[str]] = []
 
-    def start(batch: Batch) -> int:
+    def start(batch: Batch) -> subprocess.Popen[str]:
         proc = subprocess.Popen([sys.executable, "-c", _HOLD_LOCK, str(batch.path)],
                                 cwd=str(ub.REPO_ROOT), stdout=subprocess.PIPE, text=True)
         procs.append(proc)
         assert proc.stdout is not None and proc.stdout.readline().strip() == "held"
-        return proc.pid
+        return proc
 
     yield start
     for proc in procs:
@@ -439,7 +444,7 @@ def lock_holder():
 
 def test_a_live_driver_blocks_a_second_driver_and_manifest_edits(tmp_path, lock_holder):
     batch = _batch(tmp_path, target=2)
-    holder = lock_holder(batch)
+    holder = lock_holder(batch).pid
     assert batch.live_driver_pid() == holder
     with pytest.raises(BatchError, match=f"pid {holder}"):
         _driver(batch, _Plan(tmp_path, ["pass"])).drive(DriveOptions())
@@ -601,7 +606,7 @@ def test_cli_creates_lists_and_refuses_a_second_brief(tmp_path, monkeypatch):
     other.write_text("Something else.\n", encoding="utf-8")
     refused = runner.invoke(app, ["unity-batch", "neon", "--file", str(other),
                                   "--config", str(config), "--max", "0"])
-    assert refused.exit_code == 1 and "not the brief" in refused.output
+    assert refused.exit_code == 1 and "not the brief" in _flat(refused.output)
 
     listing = runner.invoke(app, ["unity-batch-status", "--config", str(config)])
     assert listing.exit_code == 0 and "neon" in listing.output and "0/6" in listing.output
@@ -643,15 +648,12 @@ def test_a_driver_killed_hard_releases_the_batch(tmp_path, lock_holder):
     # No stale lock to judge: the OS drops the lock with the process, and a
     # dead holder's pid left in driver.lock is ignored.
     batch = _batch(tmp_path, target=1)
-    holder = lock_holder(batch)
+    proc = lock_holder(batch)
+    holder = proc.pid
     assert batch.live_driver_pid() == holder
-    subprocess.run(["taskkill", "/PID", str(holder), "/F"] if sys.platform == "win32"
-                   else ["kill", "-9", str(holder)], capture_output=True, check=False)
-    for _ in range(100):
-        if not pid_alive(holder):
-            break
-        import time
-        time.sleep(0.05)
+    proc.kill()        # SIGKILL / TerminateProcess: no cleanup code runs
+    proc.wait()        # reaped, so no zombie keeps the pid on Linux
+    assert not pid_alive(holder)
     assert json.loads(batch.lock_path.read_text(encoding="utf-8"))["pid"] == holder
     assert batch.live_driver_pid() is None
     result = _driver(batch, _Plan(tmp_path, ["pass"])).drive(DriveOptions())
@@ -690,5 +692,5 @@ def test_cli_refuses_runs_zero_instead_of_defaulting_to_ten(tmp_path, monkeypatc
     result = CliRunner().invoke(app, ["unity-batch", "zero", "--file", str(_brief(tmp_path)),
                                       "--config", str(config), "--runs", "0", "--max", "0"])
     assert result.exit_code == 1
-    assert "--runs must be at least 1" in result.output
+    assert "--runs must be at least 1" in _flat(result.output)
     assert not Batch.exists(tmp_path / "out" / "_batches" / "zero")
