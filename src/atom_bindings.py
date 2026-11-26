@@ -32,8 +32,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from . import firing_provider
 from .atoms import ATOM_REGISTRY, get_atom
 from .atoms.base import AtomInvocation
-from .atoms.behavior_map import behavior_loops
-from .unity_schema import UnitySchema
+from .atoms.behavior_map import (TRIGGER_DEATH, TRIGGER_PLAYER_CONTACT, TRIGGER_SPAWN,
+                                 behavior_loops, behavior_trigger)
+from .unity_schema import EntitySpec, UnitySchema, is_embodied
 
 BINDINGS_KEY = "atom_bindings"
 FORMAT_VERSION = 1
@@ -53,7 +54,22 @@ CUSTOM_SCRIPT_HOSTS: dict[str, str] = {
 
 AtomStatus = Literal["lowered", "descriptive", "unsupported", "alias", "unregistered"]
 Phase = Literal["start_coroutine_once", "start_coroutine_loop"]
-Trigger = Literal["scene_load", "entity_spawn"]
+# entity_spawn, player_contact and death are the entity route's three entry
+# points (EntityBehavior.cs.j2, chosen by behavior_map.behavior_trigger).
+Trigger = Literal["scene_load", "entity_spawn", "player_contact", "death"]
+
+# behavior_map trigger -> the route's Trigger.
+_ENTITY_TRIGGERS: dict[str, Trigger] = {
+    TRIGGER_SPAWN: "entity_spawn",
+    TRIGGER_PLAYER_CONTACT: "player_contact",
+    TRIGGER_DEATH: "death",
+}
+# Reported on every death route: the class is added at spawn and waits for a
+# call nothing in a generated project makes yet.
+DEATH_DORMANT_FINDING = (
+    "its sequence waits for OnDeath(), and nothing sends it: EntitySpawner "
+    "attaches no health component to entity groups, so the sequence stays "
+    "dormant (it no longer runs at spawn)")
 
 _STATUS_WHY: dict[str, str] = {
     "descriptive": "is registered for Unity but has no Unity lowerer",
@@ -251,6 +267,34 @@ def _entity_scenes(schema: UnitySchema, entity_name: str) -> list[str]:
     return hosted
 
 
+def spawner_2d_skip_reason(schema: UnitySchema, entity: EntitySpec,
+                           model_path: str) -> Optional[str]:
+    """Why EntitySpawner's 2D builder never places this group, or None.
+
+    Mirrors ``templates/unity/EntitySpawner.cs.j2``. An embodied ``2D`` or
+    ``2d_topdown`` project builds its world with ``BuildSideScroller2D`` /
+    ``BuildTopDown2D`` (a UI board takes the generic ``SpawnGroup`` branch),
+    and their loops leave some groups out: the player (placed by its own
+    start helper), side-scroller road/ground (the builder draws its own
+    ground) and ``fx:`` particle groups. A group left out never receives its
+    behavior component, so its route is not attached. ``skip:`` groups are
+    reported by the caller for every game type.
+    """
+    if schema.game_type not in ("2D", "2d_topdown") or not is_embodied(schema):
+        return None
+    if model_path.startswith("fx:"):
+        return (f"the {schema.game_type} builder does not place fx: groups, so "
+                "nothing adds its behavior")
+    role = (entity.kind or "").lower()
+    if schema.game_type == "2D" and role in ("player", "road", "ground"):
+        return (f"the 2D side-scroller builder does not place kind={role!r} groups, "
+                "so nothing adds its behavior")
+    if schema.game_type == "2d_topdown" and (role == "player" or entity.tag == "Player"):
+        return ("the 2d_topdown builder does not place the player group, so nothing "
+                "adds its behavior")
+    return None
+
+
 def _firing_controllers(composed_units: Optional[list]) -> list:
     """Composed controllers whose rendered class implements IFiringProvider.
 
@@ -335,22 +379,30 @@ def derive_atom_bindings(
             continue
         host_class = entity_behavior_class_name(entity.name)
         hosted = _entity_scenes(schema, entity.name)
-        finding = None
+        trigger = _ENTITY_TRIGGERS[behavior_trigger(entity.atoms)]
+        unattached = None
         if entity.behavior != host_class:
-            finding = (f"entity.behavior is {entity.behavior!r}, so EntitySpawner never "
-                       f"adds {host_class}")
+            unattached = (f"entity.behavior is {entity.behavior!r}, so EntitySpawner never "
+                          f"adds {host_class}")
         elif str(model_paths.get(entity.name, "")).startswith("skip:"):
-            finding = "the entity group is skipped at spawn, so nothing adds its behavior"
+            unattached = "the entity group is skipped at spawn, so nothing adds its behavior"
+        elif skipped_2d := spawner_2d_skip_reason(
+                schema, entity, str(model_paths.get(entity.name, ""))):
+            unattached = skipped_2d
         elif not hosted:
-            finding = "no gameplay scene hosts this entity group"
+            unattached = "no gameplay scene hosts this entity group"
+        # A death route is attached (EntitySpawner adds the class) and still
+        # never runs, so it keeps its host and carries the finding.
+        finding = unattached or (DEATH_DORMANT_FINDING if trigger == "death" else None)
         routes.append(AtomRoute(
             source=f"entities[{entity.name}].atoms",
             host_class=host_class,
-            host=None if finding else ENTITY_SPAWNER_HOST,
-            # EntityBehavior.cs.j2 loops Run() in place unless the sequence despawns.
+            host=None if unattached else ENTITY_SPAWNER_HOST,
+            # EntityBehavior.cs.j2 loops Run() in place unless the sequence
+            # despawns; its trigger picks the entry point that starts it.
             phase="start_coroutine_loop" if behavior_loops(entity.atoms) else "start_coroutine_once",
-            trigger="entity_spawn",
-            scenes=[] if finding else hosted,
+            trigger=trigger,
+            scenes=[] if unattached else hosted,
             atoms=_bind_all(entity.atoms, implementers),
             finding=finding,
         ))

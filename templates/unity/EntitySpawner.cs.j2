@@ -976,7 +976,7 @@ public class EntitySpawner : MonoBehaviour
 {% set role = e.kind|lower %}
 {% set epath = entity_model_paths.get(e.name, "") %}
 {% if role not in ["player", "road", "ground"] and not epath.startswith("skip:") and not epath.startswith("fx:") %}
-        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh, {{ "%.2f"|format(e.tilt_deg) }}f);
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh, {{ "%.2f"|format(e.tilt_deg) }}f);
 {% endif %}
 {% endfor %}
         PlacePlayerStart2D();
@@ -997,9 +997,16 @@ public class EntitySpawner : MonoBehaviour
     }
 
     private void PlaceRow2D(string groupName, int count, float scale, string modelPath,
-                            Color color, string tag, bool backdrop, float courseLen, Shader sh,
-                            float tiltDeg = 0f)
+                            Color color, string tag, string behavior, bool backdrop,
+                            float courseLen, Shader sh, float tiltDeg = 0f)
     {
+        // The group's behavior class, resolved once exactly as SpawnGroup does
+        // (an atom-driven <Name>Behavior, or a micro's AI). Added to every
+        // instance after its collider, so a contact behavior's Start() finds
+        // the BoxCollider2D it turns into a trigger.
+        System.Type behaviorType = null;
+        if (!string.IsNullOrEmpty(behavior))
+            behaviorType = System.Type.GetType(behavior + ", Assembly-CSharp") ?? System.Type.GetType(behavior);
         // Load order: sprite_animator's OWN generated bank (Sprites/<name>/idle/
         // frame_00 → Texture2D) → modelPath's resolved 2D sprite/3D model prefab
         // → primitive cube. Checked FIRST and by groupName, not modelPath: the
@@ -1068,6 +1075,8 @@ public class EntitySpawner : MonoBehaviour
             if (!backdrop && go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!backdrop && !string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
+            if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
+                go.AddComponent(behaviorType);
         }
     }
 
@@ -1092,7 +1101,7 @@ public class EntitySpawner : MonoBehaviour
 {% set role = e.kind|lower %}
 {% set epath = entity_model_paths.get(e.name, "") %}
 {% if role != "player" and e.tag != "Player" and not epath.startswith("skip:") and not epath.startswith("fx:") %}
-        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceGroup2DTopDown("{{ e.name }}", {{ e.count }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", sh{% if e.instance_positions %}, _pos_{{ loop.index0 }}{% endif %});
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceGroup2DTopDown("{{ e.name }}", {{ e.count }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", sh{% if e.instance_positions %}, _pos_{{ loop.index0 }}{% endif %});
 {% endif %}
 {% endfor %}
 {% set _player_ns = namespace(entity=None) %}
@@ -1110,8 +1119,13 @@ public class EntitySpawner : MonoBehaviour
 
     private void PlaceGroup2DTopDown(string groupName, int count, string placement, float spacing,
                                      float radius, float scale, string modelPath, Color color,
-                                     string tag, Shader sh, Vector3[] bakedPositions = null)
+                                     string tag, string behavior, Shader sh,
+                                     Vector3[] bakedPositions = null)
     {
+        // Resolved and added exactly as in PlaceRow2D (see its comment).
+        System.Type behaviorType = null;
+        if (!string.IsNullOrEmpty(behavior))
+            behaviorType = System.Type.GetType(behavior + ", Assembly-CSharp") ?? System.Type.GetType(behavior);
         // Same sprite_animator-bank -> modelPath -> model -> primitive load
         // order as PlaceRow2D — see that method's own comment for why the
         // bank has to be checked by groupName, ahead of modelPath, rather
@@ -1176,6 +1190,8 @@ public class EntitySpawner : MonoBehaviour
             if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
+            if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
+                go.AddComponent(behaviorType);
         }
     }
 
