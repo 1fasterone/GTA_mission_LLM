@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .unity_schema import FEATURE_FLAG_VALUES
+from .unity_schema import FEATURE_FLAG_VALUES, SCENE_CAP
 
 # One closed vocabulary serves both schema validation and the LLM instruction.
 # Rendering it here removes a second manually-maintained feature list.
@@ -70,8 +70,8 @@ LIMITS (keep JSON concise):
                      in awake_extra/update_extra/fixed_update_extra/extra_methods.
                      Do not write placeholder custom scripts with all behavior
                      fields empty.
-- scenes:            max 8 scene names (no paths, just names like "Main", "MainMenu", "Level1")
-- scene_specs:       max 8 — ONE PER GAMEPLAY SCENE. What makes each scene distinct:
+- scenes:            max {scene_cap} scene names (no paths, just names like "Main", "MainMenu", "Level1")
+- scene_specs:       max {scene_cap} — ONE PER GAMEPLAY SCENE. What makes each scene distinct:
                      {{"name": "<must match a scenes entry>", "description": "one line",
                       "time_of_day": "dawn|day|sunset|night", "fog": true/false,
                       "entities": ["<entity names active in this scene>"]}}
@@ -87,6 +87,12 @@ LIMITS (keep JSON concise):
 - entities:          max 40 groups — THE SCENE CONTENT. Use this for every group of
                      objects the concept asks for (e.g. "6 rival cars", "a ring of
                      buildings", "a crowd"). Each becomes `count` primitives in the scene.
+                     Every entity "name" must be unique across the whole project
+                     (case does not matter: "Rocks" and "rocks" are one name).
+                     A group that appears in several scenes is written ONCE and
+                     named in each of those scene_specs. Two different groups
+                     (mossy boulders in a forest, ice boulders in a cave) need
+                     two different names ("ForestBoulders", "CaveBoulders").
 - features:          only from the allowed list
 
 GAME TYPES — use only one of:
@@ -353,6 +359,11 @@ OUTPUT this exact JSON structure, fully populated:
 }}
 {multimodal_block}
 Output ONLY the JSON. No other text."""
+# The scene limit is the schema's own SCENE_CAP, substituted once here, so the
+# number the model is told is the number scene_specs and the fixer enforce
+# (same rationale as unity_schema_clamp.render_cap_reminder). Done before any
+# .format() call, so every caller keeps the same placeholders.
+UNITY_SCHEMA_FILL_USER = UNITY_SCHEMA_FILL_USER.replace("{scene_cap}", str(SCENE_CAP))
 
 # Step 3 used to see only {concept} — the LLM's own prose paraphrase of the user's
 # brief, never the brief itself. Whatever the concept dropped was unrecoverable by

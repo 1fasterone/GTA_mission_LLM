@@ -953,14 +953,18 @@ class TestUnityProgrammaticFix:
         fixed = _programmatic_fix(schema)
         assert fixed.scenes[0] == "Main"
 
-    def test_scenes_capped_at_8_including_main_insertion(self):
-        # _programmatic_fix slices to [:8], then inserts "Main" if absent →
-        # result is ≤ 9.  When "Main" is included in the input it stays ≤ 8.
-        scenes_with_main = ["Main"] + [f"Scene{i}" for i in range(11)]
+    def test_scenes_capped_at_scene_cap_including_main_insertion(self):
+        # _programmatic_fix keeps the first SCENE_CAP, then inserts "Main" if
+        # absent → result is ≤ SCENE_CAP + 1. When "Main" is included in the
+        # input it stays ≤ SCENE_CAP, and the drop is recorded, not silent.
+        from src.unity_schema import SCENE_CAP
+
+        scenes_with_main = ["Main"] + [f"Scene{i}" for i in range(SCENE_CAP + 3)]
         schema = self._schema(scenes=scenes_with_main)
         fixed = _programmatic_fix(schema)
-        assert len(fixed.scenes) <= 8
+        assert len(fixed.scenes) == SCENE_CAP
         assert "Main" in fixed.scenes
+        assert len(fixed.meta["schema_clamp"]["scenes"]["dropped"]) == 4
 
     def test_scripts_capped_at_24_by_mutating_list_directly(self):
         # Pydantic enforces max_length=24 at construction time, so we
