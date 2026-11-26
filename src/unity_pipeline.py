@@ -17,7 +17,8 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
-from .llm_budgets        import (ReplyTruncatedError, reply_truncated,
+from .llm_budgets        import (ReplyTruncatedError, concept_tokens,
+                                 concept_truncated, reply_truncated,
                                  schema_fill_tokens, schema_fill_truncated)
 from .micro_pipeline     import to_pascal
 from .unity_schema       import (NORMALIZATION_META_KEY, UnityPackage,
@@ -1954,13 +1955,32 @@ class UnityPipeline:
                         + "\nEND VISUAL ASSET CONTEXT\n"
                     )
                     self._ok("Image-derived context.txt injected into Step 2")
-                concept = self.llm.chat(
-                    system      = UNITY_CONCEPT_SYSTEM,
-                    user        = concept_user,
-                    temperature = self.concept_temp,
-                    thinking    = not no_think,
-                    images      = concept_images,
+                # A measured ceiling (src/llm_budgets.py). Without one the
+                # concept inherited lm_studio.max_tokens, and a reasoning loop
+                # stopped only at the context wall. A reply cut off at the cap
+                # is refused, never handed to Step 3 as a whole brief. A cap
+                # that lands inside the reasoning makes chat() raise on the
+                # empty answer, and that is refused the same way, with the
+                # remedy for where the cap came from.
+                concept_max_tokens = concept_tokens(
+                    configured=getattr(self.llm, "max_tokens", None),
                 )
+                try:
+                    concept = self.llm.chat(
+                        system      = UNITY_CONCEPT_SYSTEM,
+                        user        = concept_user,
+                        temperature = self.concept_temp,
+                        thinking    = not no_think,
+                        images      = concept_images,
+                        max_tokens  = concept_max_tokens,
+                    )
+                except ValueError as exc:
+                    if reply_truncated(self.llm):
+                        raise concept_truncated(concept_max_tokens, 0) from exc
+                    raise
+                if reply_truncated(self.llm):
+                    raise concept_truncated(concept_max_tokens,
+                                            len(concept or ""))
                 diagnostics.concept = concept
                 diagnostics.concept_source = "llm"
                 self._ok(f"{len(concept)} chars of project concept generated")

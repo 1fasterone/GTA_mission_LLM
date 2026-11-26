@@ -155,6 +155,12 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
     ("PostSchemaLLMError", "llm_freeze_violation",
      "A Step 4-7 code path called the Pipeline LLM. Move that content into "
      "Step 3.5 and persist it into the schema (docs/LLM_FREEZE_BOUNDARY.md)."),
+    ("ReplyTruncatedError", "reply_truncated",
+     "A Pipeline LLM reply was cut off at its token cap and refused unparsed "
+     "(src/llm_budgets.py). The message names the call and the cap: a cap "
+     "below the measured budget came from lm_studio.max_tokens (raise it); "
+     "a cap at the budget means a runaway (re-run; raising it only lengthens "
+     "the loop)."),
     ("CSharpSyntaxError", "csharp_syntax_gate",
      "Generated C# failed the syntax gate. Fix the generator or template at "
      "the root, then replay the saved schema with unity-validate."),

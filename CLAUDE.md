@@ -210,6 +210,12 @@ Spatial + QA (Unity)
   objective, reachable content, brief-entity coverage). Prints a scorecard,
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
+- unity_batch.py — resumable batches of live `unity-create` runs of one
+  brief snapshot, each in its own folder, then `e2e-verify --playtest`. Stop
+  any time, continue later, raise the target; failures are samples,
+  interrupted attempts are not. Review provenance only, never read by Steps
+  2-7. CLI: python main.py unity-batch <name> --file <brief> --runs N;
+  python main.py unity-batch-status [name]. docs/UNITY_BATCH.md
 - unity_reachability.py — grid/graph BFS backing two of unity_playability's
   checks: `flood_fill_reachable` (2-D occupancy grid over terrain_bounds,
   blocked by wall/building/obstacle/rock footprints, BFS'd from the

@@ -93,6 +93,11 @@ SITES: tuple[DigestSite, ...] = (
     DigestSite("src/unity_failed_run.py", "write_failed_run_report", 2, "keep",
                "contract: exact SHA-256 names the failed-run artifact pair by "
                "prompt bytes and verifies the saved schema bytes"),
+    DigestSite("src/unity_batch.py", "_sha256_bytes", 1, "keep",
+               "contract: the unity-batch/v1 brief hash must equal the raw "
+               "prompt SHA-256 each unity-create-run-log/v2 manifest records "
+               "(brief_matches_snapshot); the same helper records the brief "
+               "snapshot and batch config bytes beside it in that manifest"),
 
     # ── output seeds ──────────────────────────────────────────────────────────
     DigestSite("src/audio/content.py", "_seed_for", 1, "keep",

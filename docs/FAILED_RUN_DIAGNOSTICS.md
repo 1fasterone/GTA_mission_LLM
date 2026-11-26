@@ -51,7 +51,7 @@ its MRO, so `RuntimeError("spatial sidecar freeze failed")` raised from a
 `SpatialPipelineError` is `spatial_layout`. A Step 3 fill whose every attempt
 was rejected is `schema_fill`.
 
-`llm_freeze_violation`, `csharp_syntax_gate`, `playability_gate`,
+`llm_freeze_violation`, `reply_truncated`, `csharp_syntax_gate`, `playability_gate`,
 `spatial_layout`, `authored_scene`, `brief_parse`, `reference_image`,
 `visual_compiler`, `schema_validation`, `llm_transport`, `timeout`,
 `interrupted`, `resources`, `filesystem`, `schema_fill`.
