@@ -36,7 +36,7 @@ because the batch owns them.
   batch.json      manifest: brief, config, flags, target, runs, discarded
   brief.txt       the brief snapshot: every run reads this file
   events.log      human-readable timeline (starts, verdicts, stops)
-  driver.lock     while a driver runs (pid)
+  driver.lock     OS-locked by the running driver (its pid inside, for messages)
   runs/01/        one folder per attempt (a re-run slot gets runs/01-a2)
     config.yaml   the batch config with unity_output_dir -> this folder
     create.log    unity-create stdout + stderr
@@ -87,9 +87,16 @@ verify runs again.
 
 ## Guards
 
-- One driver per batch (`driver.lock`). A second driver, `--add`, `--runs` and
-  `--discard` abstain while one is live, because they would race its manifest
-  writes. `--stop` is the way to talk to a live driver.
+- One driver per batch. The driver holds an OS lock on `driver.lock` for its
+  whole life (`msvcrt.locking` on Windows, `flock` elsewhere). Taking it is
+  one atomic call, so two drivers started together cannot both win, and the
+  OS releases it when the driver dies, so there is no stale lock to judge. A
+  second driver, `--add`, `--runs` and `--discard` abstain while it is held,
+  because they would race its manifest writes. `--stop` is the way to talk to
+  a live driver.
+- The target always covers every held run. After a discard leaves a gap,
+  the floor is the highest run number held, not the count. `--runs 0` and
+  `--add 0` are refused.
 - Before each run: free disk on the batch drive is at least `--min-free-gb`
   (10), and LM Studio answers `GET /v1/models` and lists the model. If either
   check fails, the batch stops with exit 2 and no slot is used.

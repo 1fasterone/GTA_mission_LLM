@@ -178,7 +178,7 @@ def test_a_batch_runs_some_now_and_the_rest_later(tmp_path):
     batch = _reload(batch)
     assert [r["n"] for r in batch.finished()] == [1, 2]
     assert batch.next_slot() == 3
-    assert not batch.lock_path.exists()           # the driver let go
+    assert batch.live_driver_pid() is None        # the driver let go of its OS lock
 
     second = _driver(batch, plan).drive(DriveOptions())
     assert (second.ran, second.exit_code) == (1, 0)
@@ -344,7 +344,7 @@ def test_ctrl_c_discards_the_attempt_and_the_slot_runs_again(tmp_path, monkeypat
         _driver(batch, plan).drive(DriveOptions())
     batch = _reload(batch)
     assert batch.runs == [] and batch.discarded[0]["status"] == "interrupted"
-    assert not batch.lock_path.exists()
+    assert batch.live_driver_pid() is None
 
     _driver(batch, plan).drive(DriveOptions())
     (record,) = _reload(batch).finished()
@@ -409,25 +409,43 @@ def test_stop_with_no_driver_running_leaves_nothing_behind(tmp_path):
     assert not batch.stop_path.exists()
 
 
+_HOLD_LOCK = (
+    "import sys, time\n"
+    "from pathlib import Path\n"
+    "from src.unity_batch import Batch\n"
+    "Batch.load(Path(sys.argv[1])).acquire()\n"
+    "print('held', flush=True)\n"
+    "time.sleep(60)\n"
+)
+
+
 @pytest.fixture
-def other_python():
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-    try:
-        yield proc.pid
-    finally:
+def lock_holder():
+    """A real second process holding a batch's driver lock, killed hard at the end."""
+    procs: list[subprocess.Popen[str]] = []
+
+    def start(batch: Batch) -> int:
+        proc = subprocess.Popen([sys.executable, "-c", _HOLD_LOCK, str(batch.path)],
+                                cwd=str(ub.REPO_ROOT), stdout=subprocess.PIPE, text=True)
+        procs.append(proc)
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "held"
+        return proc.pid
+
+    yield start
+    for proc in procs:
         proc.kill()
         proc.wait()
 
 
-def test_a_live_driver_blocks_a_second_driver_and_manifest_edits(tmp_path, other_python):
+def test_a_live_driver_blocks_a_second_driver_and_manifest_edits(tmp_path, lock_holder):
     batch = _batch(tmp_path, target=2)
-    batch.lock_path.write_text(json.dumps({"pid": other_python}), encoding="utf-8")
-    assert batch.live_driver_pid() == other_python
-    with pytest.raises(BatchError, match=f"pid {other_python}"):
+    holder = lock_holder(batch)
+    assert batch.live_driver_pid() == holder
+    with pytest.raises(BatchError, match=f"pid {holder}"):
         _driver(batch, _Plan(tmp_path, ["pass"])).drive(DriveOptions())
     with pytest.raises(BatchError, match="--stop"):
         batch.set_target(runs=None, add=1)
-    assert batch.request_stop() == other_python
+    assert batch.request_stop() == holder
     assert batch.stop_path.exists()
 
 
@@ -438,7 +456,7 @@ def test_the_target_can_be_set_or_raised_but_not_below_held_runs(tmp_path):
     assert batch.set_target(runs=None, add=3) == 5
     assert batch.set_target(runs=4, add=None) == 4
     assert _reload(batch).target == 4
-    with pytest.raises(BatchError, match="below the 2 run"):
+    with pytest.raises(BatchError, match="below run 02"):
         batch.set_target(runs=1, add=None)
     with pytest.raises(BatchError, match="not both"):
         batch.set_target(runs=3, add=1)
@@ -600,3 +618,77 @@ def test_cli_without_a_brief_names_the_remedy(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["unity-batch", "nope", "--config", str(config)])
     assert result.exit_code == 1
     assert "--file" in result.output
+
+
+# ── PR #314 review: lock atomicity, target floor, --runs 0 ─────────────────────
+
+def test_two_drivers_started_together_cannot_both_hold_the_batch(tmp_path):
+    # Regression: the lock was check-then-write, so two drivers starting at the
+    # same moment could both pass the check. Taking an OS lock is one call.
+    first = _batch(tmp_path, target=1)
+    second = Batch.load(first.path)
+    first.acquire()
+    try:
+        with pytest.raises(BatchError, match=f"pid {os.getpid()}"):
+            second.acquire()
+        assert second.live_driver_pid() == os.getpid()
+    finally:
+        first.release()
+    assert second.live_driver_pid() is None
+    second.acquire()
+    second.release()
+
+
+def test_a_driver_killed_hard_releases_the_batch(tmp_path, lock_holder):
+    # No stale lock to judge: the OS drops the lock with the process, and a
+    # dead holder's pid left in driver.lock is ignored.
+    batch = _batch(tmp_path, target=1)
+    holder = lock_holder(batch)
+    assert batch.live_driver_pid() == holder
+    subprocess.run(["taskkill", "/PID", str(holder), "/F"] if sys.platform == "win32"
+                   else ["kill", "-9", str(holder)], capture_output=True, check=False)
+    for _ in range(100):
+        if not pid_alive(holder):
+            break
+        import time
+        time.sleep(0.05)
+    assert json.loads(batch.lock_path.read_text(encoding="utf-8"))["pid"] == holder
+    assert batch.live_driver_pid() is None
+    result = _driver(batch, _Plan(tmp_path, ["pass"])).drive(DriveOptions())
+    assert result.exit_code == 0 and len(_reload(batch).finished()) == 1
+
+
+def test_the_target_must_cover_the_highest_held_run_after_a_gap(tmp_path):
+    # Regression: with runs 2 and 3 held after discarding run 1, the floor was
+    # the record count (2), so --runs 2 passed and slot 1 refilled past it.
+    batch = _batch(tmp_path, target=3)
+    _driver(batch, _Plan(tmp_path, ["pass", "pass", "pass"])).drive(DriveOptions())
+    batch = _reload(batch)
+    batch.discard(1, "test gap")
+    assert sorted(int(r["n"]) for r in batch.runs) == [2, 3]
+    with pytest.raises(BatchError, match="below run 03"):
+        batch.set_target(runs=2, add=None)
+    assert _reload(batch).target == 3
+    assert batch.set_target(runs=3, add=None) == 3
+    assert batch.next_slot() == 1
+
+
+@pytest.mark.parametrize("add", [0, -2])
+def test_add_must_raise_the_target(tmp_path, add):
+    batch = _batch(tmp_path, target=3)
+    with pytest.raises(BatchError, match="--add must be at least 1"):
+        batch.set_target(runs=None, add=add)
+    assert _reload(batch).target == 3
+
+
+def test_cli_refuses_runs_zero_instead_of_defaulting_to_ten(tmp_path, monkeypatch):
+    # Regression: `runs or DEFAULT_TARGET` turned an explicit --runs 0 into 10.
+    from main import app
+
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path)
+    result = CliRunner().invoke(app, ["unity-batch", "zero", "--file", str(_brief(tmp_path)),
+                                      "--config", str(config), "--runs", "0", "--max", "0"])
+    assert result.exit_code == 1
+    assert "--runs must be at least 1" in result.output
+    assert not Batch.exists(tmp_path / "out" / "_batches" / "zero")

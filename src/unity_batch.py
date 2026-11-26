@@ -376,6 +376,50 @@ def check_create_args(args: list[str]) -> list[str]:
 
 # ── the batch ──────────────────────────────────────────────────────────────────
 
+# Windows locks are mandatory per byte range, so the lock sits on one byte far
+# past the pid text; other processes can still read the pid while it is held.
+_LOCK_OFFSET = 1 << 20
+
+
+def _try_lock(fd: int) -> bool:
+    """Take the non-blocking exclusive OS lock on an open lock file, or return False."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        return
+    import fcntl
+
+    fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _pid_text(pid: int) -> str:
+    return f"pid {pid}" if pid > 0 else "pid unknown"
+
+
 def _folder_name(n: int, attempt: int) -> str:
     return f"{n:02d}" if attempt == 1 else f"{n:02d}-a{attempt}"
 
@@ -386,6 +430,7 @@ class Batch:
 
     path: Path
     data: dict[str, Any] = field(default_factory=dict)
+    _lock_fd: int | None = field(default=None, repr=False, compare=False)
 
     # -- files --
     @property
@@ -601,40 +646,67 @@ class Batch:
             attempt += 1
 
     # -- the driver lock --
-    def live_driver_pid(self) -> int | None:
+    # An OS lock on `driver.lock`, held by the open handle for the driver's
+    # whole life. Taking it is one atomic call, so two drivers started together
+    # cannot both win, and the OS drops it when the process dies however it
+    # dies, so there is no stale lock to judge and no pid to trust. The pid
+    # written inside is for messages only. The file is never deleted: deleting
+    # it could orphan a lock a second driver has just taken.
+    def _lock_pid(self) -> int:
         try:
-            info = json.loads(self.lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            pid = json.loads(self.lock_path.read_text(encoding="utf-8")).get("pid")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return 0
+        return pid if isinstance(pid, int) and pid > 0 else 0
+
+    def live_driver_pid(self) -> int | None:
+        """The pid of the driver holding this batch, 0 when held but unreadable, else None."""
+        if self._lock_fd is not None:
+            return os.getpid()
+        try:
+            fd = os.open(self.lock_path, os.O_RDWR)
+        except OSError:
             return None
-        pid = info.get("pid")
-        if isinstance(pid, int) and pid != os.getpid() and python_alive(pid):
-            return pid
-        return None
+        try:
+            if _try_lock(fd):
+                _unlock(fd)
+                return None
+            return self._lock_pid()
+        finally:
+            os.close(fd)
 
     def require_no_driver(self, action: str) -> None:
         pid = self.live_driver_pid()
         if pid is not None:
             raise BatchError(
-                f"a driver (pid {pid}) is running this batch, so {action} would race "
-                f"its manifest writes. Ask it to stop after the current run with "
+                f"a driver ({_pid_text(pid)}) is running this batch, so {action} would "
+                f"race its manifest writes. Ask it to stop after the current run with "
                 f"`unity-batch {self.name} --stop`, then retry."
             )
 
     def acquire(self) -> None:
-        self.require_no_driver("a second driver")
-        self.lock_path.write_text(json.dumps({"pid": os.getpid(), "started_utc": _iso(_utc_now())}),
-                                  encoding="utf-8")
+        if self._lock_fd is not None:
+            return
+        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        if not _try_lock(fd):
+            os.close(fd)
+            self.require_no_driver("a second driver")
+            raise BatchError(f"another driver holds {self.lock_path}")
+        self._lock_fd = fd
+        stamp = json.dumps({"pid": os.getpid(), "started_utc": _iso(_utc_now())})
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, stamp.encode("utf-8"))
 
     def release(self) -> None:
-        try:
-            info = json.loads(self.lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        fd = self._lock_fd
+        if fd is None:
             return
-        if info.get("pid") == os.getpid():
-            try:
-                self.lock_path.unlink()
-            except OSError:
-                pass
+        self._lock_fd = None
+        try:
+            _unlock(fd)
+        finally:
+            os.close(fd)
 
     # -- edits a human asks for --
     def set_target(self, *, runs: int | None, add: int | None) -> int:
@@ -642,12 +714,18 @@ class Batch:
             raise BatchError("pass --runs (set the target) or --add (raise it), not both")
         if runs is None and add is None:
             return self.target
+        if add is not None and add < 1:
+            raise BatchError(f"--add must be at least 1 (got {add}); --runs N sets the target")
         new = int(runs) if runs is not None else self.target + int(add or 0)
-        floor = len(self.runs)
-        if new < max(floor, 1):
+        # Run numbers can have gaps after a discard, so the floor is the
+        # highest slot held, not the count: runs 2 and 3 with slot 1 free
+        # still need a target of 3, or the driver refills slot 1 past it.
+        highest = max((int(r["n"]) for r in self.runs), default=0)
+        if new < max(highest, 1):
             raise BatchError(
-                f"target {new} is below the {floor} run(s) this batch already holds. "
-                "Discard runs first (--discard N --reason ...) if that is the intent."
+                f"target {new} is below run {highest:02d}, which this batch already holds "
+                f"(the target must be at least 1 and cover every held run). Discard runs "
+                "first (--discard N --reason ...) if that is the intent."
             )
         if new != self.target:
             self.require_no_driver("changing the target")

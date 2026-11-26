@@ -1507,9 +1507,11 @@ def unity_batch(
             if add is not None:
                 raise BatchError("--add raises the target of an existing batch; "
                                  "a new batch takes --runs")
+            # Default only when --runs is absent: an explicit 0 must reach
+            # Batch.create's validation, never become a ten-run batch.
             batch = Batch.create(folder, brief=file, config=config_path, create_args=extra,
                                  verify=True if verify is None else verify,
-                                 target=runs or DEFAULT_TARGET)
+                                 target=DEFAULT_TARGET if runs is None else runs)
             created = True
             echo(f"Batch created: {folder}")
 
