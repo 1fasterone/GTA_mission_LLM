@@ -1,0 +1,1203 @@
+{
+  "project_name": "NeonFugitive",
+  "company_name": "Cyberpunk Studios",
+  "description": "A third-person open-world cyberpunk bounty-hunter game where you navigate a rain-soaked megacity on hoverbikes.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "drive",
+  "locomotion_modes": [
+    "on_foot"
+  ],
+  "environment": {
+    "time_of_day": "night",
+    "fog": true,
+    "fog_color": "#0D0D1A",
+    "sun_intensity": 0.5
+  },
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "visual_style": "stylized",
+  "color_palette": {
+    "name": "NeonFugitive",
+    "primary": "#00F5FF",
+    "secondary": "#1A0A2E",
+    "accent": "#FF2D78",
+    "background": "#0D0D1A",
+    "trim": "#FFD600"
+  },
+  "scenes": [
+    "MainMenu",
+    "Main",
+    "DistrictMarket",
+    "IndustrialDock",
+    "CorporateTower",
+    "UndergroundTunnel",
+    "RooftopSkyway",
+    "OuterSlums",
+    "BossArena"
+  ],
+  "scene_specs": [
+    {
+      "name": "MainMenu",
+      "description": "The main menu hub with stylized neon background and character selection.",
+      "time_of_day": "night",
+      "fog": true,
+      "entities": []
+    },
+    {
+      "name": "Main",
+      "description": "The central district connecting all zones, featuring a mix of verticality and open roads.",
+      "time_of_day": "night",
+      "fog": false,
+      "entities": [
+        "NeonSigns",
+        "StreetLamps"
+      ]
+    },
+    {
+      "name": "DistrictMarket",
+      "description": "Crowded neon market with narrow alleys and heavy pedestrian traffic.",
+      "time_of_day": "night",
+      "fog": false,
+      "entities": [
+        "MarketStalls",
+        "Crowd",
+        "NeonSigns"
+      ]
+    },
+    {
+      "name": "IndustrialDock",
+      "description": "Dark industrial zone with shipping containers and heavy machinery.",
+      "time_of_day": "night",
+      "fog": true,
+      "entities": [
+        "ShippingContainers",
+        "CraneStructures"
+      ]
+    },
+    {
+      "name": "CorporateTower",
+      "description": "High-tech corporate interior with glass floors and holographic displays.",
+      "time_of_day": "night",
+      "fog": false,
+      "entities": [
+        "ServerRacks",
+        "HologramProjectors"
+      ]
+    },
+    {
+      "name": "UndergroundTunnel",
+      "description": "Dark subterranean tunnel system with dripping water and graffiti.",
+      "time_of_day": "night",
+      "fog": true,
+      "entities": [
+        "VentilationShafts",
+        "GraffitiWalls"
+      ]
+    },
+    {
+      "name": "RooftopSkyway",
+      "description": "Elevated sky-bridge extraction point with wind and city lights below.",
+      "time_of_day": "night",
+      "fog": false,
+      "entities": [
+        "SkywayRails",
+        "WindTurbines"
+      ]
+    },
+    {
+      "name": "OuterSlums",
+      "description": "Flooded outer district with makeshift rafts and submerged ruins.",
+      "time_of_day": "night",
+      "fog": true,
+      "entities": [
+        "FloatingDebris",
+        "SubmergedRuins"
+      ]
+    },
+    {
+      "name": "BossArena",
+      "description": "Final confrontation space with high platforms and hazard traps.",
+      "time_of_day": "night",
+      "fog": false,
+      "entities": [
+        "PlatformTraps",
+        "EnergyGenerators"
+      ]
+    }
+  ],
+  "features": [
+    "physics",
+    "ui_toolkit",
+    "input_system",
+    "cinemachine",
+    "navmesh",
+    "audio",
+    "addressables",
+    "localization",
+    "timeline",
+    "animation_rigging",
+    "inventory",
+    "dialogue",
+    "npc_dialog",
+    "vfx",
+    "scene_transition"
+  ],
+  "packages": [
+    {
+      "description": "Unity Input System for robust multi-device control schemes."
+    },
+    {
+      "description": "Cinemachine package for advanced camera tracking and lock-on targeting."
+    },
+    {
+      "description": "NavMesh components for AI pathfinding across complex terrain."
+    },
+    {
+      "description": "Unity UI Toolkit for modern, scalable interface elements."
+    },
+    {
+      "description": "Addressables system for efficient asset loading and streaming."
+    }
+  ],
+  "scripts": [
+    {
+      "name": "PlayerController",
+      "type": "player",
+      "description": "Handles third-person movement, parkour traversal (wall-run, vault), and vehicle switching.",
+      "attach_to": "player"
+    },
+    {
+      "name": "CameraManager",
+      "type": "camera",
+      "description": "Manages Cinemachine virtual cameras for third-person view and lock-on targeting modes."
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Central hub managing game state, scoring, lives, and scene transitions between districts."
+    },
+    {
+      "name": "EnemyAI",
+      "type": "enemy",
+      "description": "Implements NavMesh agents with patrol, chase, and alert states for bounty targets.",
+      "attach_to": "systems"
+    },
+    {
+      "name": "BountyTracker",
+      "type": "custom",
+      "description": "Manages live contracts, tracking multiple bounties simultaneously with visual indicators.",
+      "extra_usings": [
+        "System.Collections.Generic",
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_activeContracts",
+          "type": "List<string>",
+          "default": "new List<string>()"
+        },
+        {
+          "name": "_targetTransforms",
+          "type": "Dictionary<string, Transform>",
+          "default": "new Dictionary<string, Transform>()"
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "var playerFSM = GameContext.Instance.Get<PlayerFSM>(); if (playerFSM != null) { foreach(var kvp in _targetTransforms) { var target = kvp.Value; float dist = Vector3.Distance(transform.position, target.position); if(dist < 10f && !kvp.Key.Contains(\"Active\")) { kvp.Key += \" Active\"; } } }",
+      "fixed_update_extra": "",
+      "extra_methods": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "custom",
+      "description": "Handles in-world hologram events and switches ambient audio/sky colors on zone transitions.",
+      "attach_to": "systems"
+    },
+    {
+      "name": "DistrictManager",
+      "type": "custom",
+      "description": "Manages district-specific visual identity, lighting changes, and weather effects per zone.",
+      "extra_usings": [
+        "System.Collections.Generic",
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_currentZone",
+          "type": "string",
+          "default": "\"Main\""
+        },
+        {
+          "name": "_skyColor",
+          "type": "Color",
+          "default": "#0D0D1A"
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [
+        {
+          "signature": "public void SwitchZone(string newZone)",
+          "body": "_currentZone = newZone; var skyColor = GetSkyColor(newZone); _skyColor = skyColor; GameContext.Instance.Get<LightingDirector>()?.SetAmbientColor(_skyColor);"
+        }
+      ]
+    },
+    {
+      "name": "VehicleController",
+      "type": "custom",
+      "description": "Controls rideable hoverbikes with physics-based steering and parkour traversal.",
+      "extra_usings": [
+        "System.Collections.Generic",
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_hoverbikeRigidbody",
+          "type": "Rigidbody",
+          "default": "null"
+        },
+        {
+          "name": "_isHovering",
+          "type": "bool",
+          "default": "false"
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (_hoverbikeRigidbody != null) { _hoverbikeRigidbody.velocity = Vector3.up * 0.5f; }",
+      "fixed_update_extra": "",
+      "extra_methods": []
+    },
+    {
+      "name": "WeaponSystem",
+      "type": "custom",
+      "description": "Manages ranged and melee attack combos with cooldowns.",
+      "attach_to": "player"
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "activation_first_boot",
+      "label": "Activation: player boots up for the first time in an alley",
+      "description": "Player awakens in a dark alley, receiving initial controls and mission briefing.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "first_mark_contract",
+      "label": "First Mark: player receives the first bounty contract",
+      "description": "A hologram appears offering the first bounty contract in the district.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "street_chase_market",
+      "label": "Street Chase: player pursues mark through market crowds (on_enemy_death)",
+      "description": "High-speed pursuit through crowded markets, engaging enemies and dodging obstacles.",
+      "trigger": "manual"
+    },
+    {
+      "id": "betrayal_handler_reveal",
+      "label": "Betrayal: handler reveals the player is also a target",
+      "description": "Critical plot twist where the handler's true intentions are revealed via timer.",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "underground_escape_tunnel",
+      "label": "Underground: player escapes into the tunnel district",
+      "description": "Player flees into the dark underground tunnels to escape pursuit.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "data_heist_corporate_tower",
+      "label": "Data Heist: player steals identity files from corporate tower (on_pickup)",
+      "description": "Stealth infiltration of the corporate tower to steal critical data.",
+      "trigger": "manual"
+    },
+    {
+      "id": "showdown_programmer",
+      "label": "Showdown: final confrontation with the original programmer",
+      "description": "Final boss battle against the original programmer in a high-tech arena.",
+      "trigger": "manual"
+    },
+    {
+      "id": "escape_skybridge_extraction",
+      "label": "Escape: player reaches the sky-bridge extraction point",
+      "description": "Player escapes to the rooftop skyway for final extraction and victory.",
+      "trigger": "on_enter_zone"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "PulsingSynthMainTheme",
+      "description": "Looping synth theme with pulsing basslines and neon arpeggios.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "DistrictMarketAmbient",
+      "description": "Tense urban crowd noise mixed with distant traffic and neon hum.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "IndustrialDockDrone",
+      "description": "Low-frequency machinery hum and water dripping sounds.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "ChaseAdrenalineTrack",
+      "description": "Fast-paced synth percussion with rising intensity for pursuits.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "CorporateTowerTension",
+      "description": "Slow arpeggiated suspense music with cold electronic tones.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "RainThunderEnvironment",
+      "description": "Heavy rain sounds and distant thunder for outdoor weather sequences.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "CombatHitGunshotSFXPack",
+      "description": "Non-looping punchy hits, laser blasts, and gunshot SFX.",
+      "loop": false,
+      "category": "sfx"
+    },
+    {
+      "name": "VictoryStingCreditsOutro",
+      "description": "Emotional resolution music for victory moments and credits roll.",
+      "loop": false,
+      "category": "music"
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "OuterSlumTerrain",
+      "description": "Procedurally generated terrain for the outer slum district with uneven ground.",
+      "mesh_type": "terrain",
+      "resolution": 64
+    },
+    {
+      "name": "MarketRoadGrid",
+      "description": "Procedural road network grid for the market district with tight turns.",
+      "mesh_type": "road",
+      "resolution": 48
+    },
+    {
+      "name": "FloodedZoneWaterPlane",
+      "description": "Procedural water plane for the flooded outer zone with wave effects.",
+      "mesh_type": "water",
+      "resolution": 32
+    },
+    {
+      "name": "CorporateTowerRoomLayout",
+      "description": "Procedural room layouts for corporate tower interior spaces.",
+      "mesh_type": "room",
+      "resolution": 24
+    }
+  ],
+  "entities": [
+    {
+      "name": "NeonSigns",
+      "kind": "prop",
+      "count": 15,
+      "shape": "quad",
+      "placement": "scatter",
+      "color_role": "accent",
+      "scale": 2.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "neon sign board",
+      "sketchfab_query": "neon sign cyberpunk"
+    },
+    {
+      "name": "StreetLamps",
+      "kind": "prop",
+      "count": 20,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "primary",
+      "scale": 1.5,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "street lamp post",
+      "sketchfab_query": "street lamp cyberpunk"
+    },
+    {
+      "name": "MarketStalls",
+      "kind": "building",
+      "count": 8,
+      "shape": "cube",
+      "placement": "grid",
+      "color_role": "secondary",
+      "scale": 3.0,
+      "tag": "Building",
+      "behavior": "",
+      "model_hint": "market stall structure",
+      "sketchfab_query": "cyberpunk market stall"
+    },
+    {
+      "name": "Crowd",
+      "kind": "crowd",
+      "count": 40,
+      "shape": "sphere",
+      "placement": "grid",
+      "color_role": "trim",
+      "scale": 0.8,
+      "tag": "NPC",
+      "behavior": "",
+      "model_hint": "pedestrian character",
+      "sketchfab_query": "cyberpunk pedestrian"
+    },
+    {
+      "name": "ShippingContainers",
+      "kind": "prop",
+      "count": 12,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "scale": 4.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "shipping container stack",
+      "sketchfab_query": "industrial shipping container"
+    },
+    {
+      "name": "CraneStructures",
+      "kind": "structure",
+      "count": 5,
+      "shape": "cylinder",
+      "placement": "single",
+      "color_role": "primary",
+      "scale": 6.0,
+      "tag": "Structure",
+      "behavior": "",
+      "model_hint": "industrial crane arm",
+      "sketchfab_query": "port crane industrial"
+    },
+    {
+      "name": "ServerRacks",
+      "kind": "prop",
+      "count": 10,
+      "shape": "cube",
+      "placement": "line",
+      "color_role": "accent",
+      "scale": 2.5,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "server rack unit",
+      "sketchfab_query": "server rack data center"
+    },
+    {
+      "name": "HologramProjectors",
+      "kind": "mechanism",
+      "count": 6,
+      "shape": "cylinder",
+      "placement": "single",
+      "color_role": "primary",
+      "scale": 3.0,
+      "tag": "Mechanism",
+      "behavior": "",
+      "model_hint": "hologram projector unit",
+      "sketchfab_query": "holographic display cyberpunk"
+    },
+    {
+      "name": "VentilationShafts",
+      "kind": "structure",
+      "count": 8,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "scale": 5.0,
+      "tag": "Structure",
+      "behavior": "",
+      "model_hint": "ventilation shaft tunnel",
+      "sketchfab_query": "underground ventilation shaft"
+    },
+    {
+      "name": "GraffitiWalls",
+      "kind": "prop",
+      "count": 10,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "accent",
+      "scale": 2.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "graffiti covered wall",
+      "sketchfab_query": "graffiti wall urban decay"
+    },
+    {
+      "name": "SkywayRails",
+      "kind": "rail",
+      "count": 4,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "primary",
+      "scale": 1.0,
+      "tag": "Rail",
+      "behavior": "",
+      "model_hint": "skyway rail track",
+      "sketchfab_query": "elevated skyway track"
+    },
+    {
+      "name": "WindTurbines",
+      "kind": "structure",
+      "count": 3,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "scale": 8.0,
+      "tag": "Structure",
+      "behavior": "",
+      "model_hint": "wind turbine blade",
+      "sketchfab_query": "vertical axis wind turbine"
+    },
+    {
+      "name": "FloatingDebris",
+      "kind": "prop",
+      "count": 25,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "scale": 1.0,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "floating debris chunk",
+      "sketchfab_query": "flooded zone debris"
+    },
+    {
+      "name": "SubmergedRuins",
+      "kind": "structure",
+      "count": 4,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "scale": 10.0,
+      "tag": "Structure",
+      "behavior": "",
+      "model_hint": "submerged ruin structure",
+      "sketchfab_query": "underwater ruin temple"
+    },
+    {
+      "name": "PlatformTraps",
+      "kind": "mechanism",
+      "count": 6,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "accent",
+      "scale": 3.0,
+      "tag": "Mechanism",
+      "behavior": "",
+      "model_hint": "platform trap hazard",
+      "sketchfab_query": "arena platform trap"
+    },
+    {
+      "name": "EnergyGenerators",
+      "kind": "mechanism",
+      "count": 3,
+      "shape": "cylinder",
+      "placement": "single",
+      "color_role": "primary",
+      "scale": 5.0,
+      "tag": "Mechanism",
+      "behavior": "",
+      "model_hint": "energy generator core",
+      "sketchfab_query": "fusion reactor core"
+    },
+    {
+      "name": "HoverbikePlayerModel",
+      "kind": "vehicle",
+      "count": 1,
+      "shape": "capsule",
+      "placement": "single",
+      "color_role": "primary",
+      "scale": 2.0,
+      "tag": "Vehicle",
+      "behavior": "",
+      "model_hint": "hoverbike vehicle model",
+      "sketchfab_query": "futuristic hover bike"
+    },
+    {
+      "name": "BountyTargetEnemies",
+      "kind": "enemy",
+      "count": 12,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "accent",
+      "scale": 1.0,
+      "tag": "Enemy",
+      "behavior": "",
+      "model_hint": "bounty hunter character",
+      "sketchfab_query": "cyberpunk bounty hunter"
+    },
+    {
+      "name": "BossProgrammerModel",
+      "kind": "enemy",
+      "count": 1,
+      "shape": "capsule",
+      "placement": "single",
+      "color_role": "accent",
+      "scale": 2.5,
+      "tag": "Enemy",
+      "behavior": "",
+      "model_hint": "programmer boss character",
+      "sketchfab_query": "cyberpunk boss character"
+    }
+  ],
+  "capabilities": {
+    "controller": {
+      "movement": true,
+      "jump": true,
+      "sprint": false,
+      "crouch": false,
+      "speed": 6.0,
+      "sprint_multiplier": 1.7,
+      "jump_force": 8.0,
+      "look_sensitivity": 2.0
+    },
+    "physics": {
+      "gravity": true,
+      "collision": "dynamic",
+      "mass": 80.0,
+      "drag": 0.0
+    },
+    "hud": {
+      "show_health": true,
+      "show_ammo": false,
+      "show_objective": true,
+      "show_minimap": true
+    },
+    "input": {
+      "bindings": [
+        {
+          "action": "Fire",
+          "key": "Mouse0"
+        },
+        {
+          "action": "Interact",
+          "key": "E"
+        }
+      ]
+    },
+    "ai": {
+      "pathfinding": true,
+      "detection_range": 15.0,
+      "behavior": "patrol"
+    },
+    "animation": {
+      "rig_type": "humanoid",
+      "clips": {
+        "Idle": "Idle",
+        "Run": "Run"
+      }
+    },
+    "dialog": {
+      "system": "simple",
+      "bark_on_sight": false
+    },
+    "vfx": {
+      "particles": true,
+      "post_processing": true
+    },
+    "model": {
+      "lod": "auto",
+      "animations": {
+        "Idle": "Idle"
+      }
+    }
+  },
+  "characters": [
+    {
+      "id": "player_character",
+      "name": "Rogue Agent",
+      "role": "player",
+      "model_ref": "HoverbikePlayerModel",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ]
+    },
+    {
+      "id": "bounty_hunter_1",
+      "name": "Neon Hunter",
+      "role": "enemy",
+      "model_ref": "BountyTargetEnemies",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ]
+    },
+    {
+      "id": "programmer_boss",
+      "name": "Original Programmer",
+      "role": "boss",
+      "model_ref": "BossProgrammerModel",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ]
+    }
+  ],
+  "missions": [
+    {
+      "id": "first_bounty_mission",
+      "title": "First Mark",
+      "description": "Locate and neutralize the first bounty target in the district.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Reach the marked target location",
+          "type": "reach",
+          "target_ref": "BountyTargetEnemies",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "rewards": {
+        "score": 100
+      },
+      "story_beat_ref": "first_mark_contract"
+    },
+    {
+      "id": "data_heist_mission",
+      "title": "Data Heist",
+      "description": "Infiltrate the corporate tower and steal identity files.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Collect all identity files from server racks",
+          "type": "collect",
+          "target_ref": "ServerRacks",
+          "count": 5,
+          "optional": false
+        }
+      ],
+      "rewards": {
+        "score": 200
+      },
+      "story_beat_ref": "data_heist_corporate_tower"
+    },
+    {
+      "id": "final_showdown_mission",
+      "title": "Showdown",
+      "description": "Confront the original programmer and escape to extraction.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Defeat the programmer boss",
+          "type": "defeat",
+          "target_ref": "BossProgrammerModel",
+          "count": 1,
+          "optional": false
+        },
+        {
+          "id": "obj_2",
+          "description": "Reach the sky-bridge extraction point",
+          "type": "reach",
+          "target_ref": "SkywayRails",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "rewards": {
+        "score": 500
+      },
+      "story_beat_ref": "showdown_programmer"
+    }
+  ],
+  "audio_specs": [
+    {
+      "id": "hoverbike_engine",
+      "type": "sfx",
+      "description": "Hoverbike engine hum with pitch variation based on speed.",
+      "generation_method": "procedural",
+      "loop": false,
+      "parameters": {
+        "gen_prompt": "futuristic hover bike engine sound low frequency hum rising in pitch"
+      }
+    },
+    {
+      "id": "footstep_neon",
+      "type": "sfx",
+      "description": "Neon-lit floor footsteps with slight echo.",
+      "generation_method": "procedural",
+      "loop": false,
+      "parameters": {
+        "gen_prompt": "cyberpunk neon lit floor footstep sound metallic click"
+      }
+    },
+    {
+      "id": "pickup_chime",
+      "type": "sfx",
+      "description": "High-pitched chime for data file pickups.",
+      "generation_method": "sfxr",
+      "loop": false,
+      "parameters": {
+        "gen_prompt": "short high pitched electronic chime sound"
+      }
+    },
+    {
+      "id": "ambient_rain_city",
+      "type": "ambient",
+      "description": "Heavy rain on neon surfaces with distant city traffic.",
+      "generation_method": "stable_audio",
+      "loop": true,
+      "parameters": {
+        "gen_prompt": "heavy rain falling on wet cyberpunk street with distant traffic noise"
+      }
+    },
+    {
+      "id": "dialogue_hologram",
+      "type": "voice",
+      "description": "Holographic dialogue lines from NPCs and story beats.",
+      "generation_method": "elevenlabs",
+      "loop": false,
+      "parameters": {
+        "gen_prompt": "cyberpunk female voice with slight robotic filter"
+      }
+    }
+  ],
+  "behavior_trees": [
+    {
+      "id": "bounty_hunter_brain",
+      "name": "BountyHunterBrain",
+      "tree": {
+        "root": "n1",
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "selector",
+            "children": [
+              "n2",
+              "n4"
+            ]
+          },
+          {
+            "id": "n2",
+            "type": "condition",
+            "action": "PlayerInRange",
+            "params": {
+              "range": 15.0
+            }
+          },
+          {
+            "id": "n3",
+            "type": "sequence",
+            "children": [
+              "n4"
+            ]
+          },
+          {
+            "id": "n4",
+            "type": "action",
+            "action": "ChasePlayer",
+            "params": {
+              "speed": 8.0
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "animations": [
+    {
+      "id": "idle_animation",
+      "name": "Idle",
+      "clip": "Idle",
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "run_animation",
+      "name": "Run",
+      "clip": "Run",
+      "loop": true,
+      "events": [
+        "Footstep"
+      ]
+    }
+  ],
+  "vfx": [
+    {
+      "id": "neon_glow_emitter",
+      "name": "NeonGlowEmitter",
+      "type": "particle",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.5
+      }
+    },
+    {
+      "id": "rain_drop_system",
+      "name": "RainDropSystem",
+      "type": "particle",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      }
+    },
+    {
+      "id": "impact_spark_fx",
+      "name": "ImpactSparkFX",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 2.0,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 1.0
+      }
+    },
+    {
+      "id": "hologram_flicker",
+      "name": "HologramFlicker",
+      "type": "shader_fx",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      }
+    }
+  ],
+  "materials": [
+    {
+      "id": "neon_glass_mat",
+      "name": "NeonGlassMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#00F5FF",
+        "smoothness": 0.9
+      }
+    },
+    {
+      "id": "wet_concrete_mat",
+      "name": "WetConcreteMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#1A0A2E",
+        "smoothness": 0.3
+      }
+    },
+    {
+      "id": "metal_rust_mat",
+      "name": "MetalRustMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#2B1D0E",
+        "smoothness": 0.5
+      }
+    },
+    {
+      "id": "hologram_projector_mat",
+      "name": "HologramProjectorMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#FF2D78",
+        "smoothness": 0.1
+      }
+    },
+    {
+      "id": "water_surface_mat",
+      "name": "WaterSurfaceMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#0D0D1A",
+        "smoothness": 0.8
+      }
+    },
+    {
+      "id": "energy_core_mat",
+      "name": "EnergyCoreMaterial",
+      "shader_model": "Standard",
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#FFD600",
+        "smoothness": 0.2
+      }
+    }
+  ],
+  "shaders": [
+    {
+      "id": "neon_bloom_shader",
+      "name": "NeonBloomShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Adds chromatic aberration and bloom to neon sources"
+      }
+    },
+    {
+      "id": "rain_wet_surface_shader",
+      "name": "RainWetSurfaceShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Simulates wet surface reflections and water droplets"
+      }
+    },
+    {
+      "id": "hologram_distortion_shader",
+      "name": "HologramDistortionShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Creates flickering distortion effects for holograms"
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "hoverbike_model",
+      "name": "HoverbikeModel",
+      "category": "vehicle",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "neon_glass_mat"
+      ]
+    },
+    {
+      "id": "bounty_hunter_model",
+      "name": "BountyHunterModel",
+      "category": "character",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "metal_rust_mat"
+      ]
+    },
+    {
+      "id": "programmer_boss_model",
+      "name": "ProgrammerBossModel",
+      "category": "character",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "neon_glass_mat"
+      ]
+    },
+    {
+      "id": "market_stall_model",
+      "name": "MarketStallModel",
+      "category": "prop",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "wet_concrete_mat"
+      ]
+    },
+    {
+      "id": "server_rack_model",
+      "name": "ServerRackModel",
+      "category": "prop",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "metal_rust_mat"
+      ]
+    },
+    {
+      "id": "energy_generator_model",
+      "name": "EnergyGeneratorModel",
+      "category": "mechanism",
+      "generation_method": "imported",
+      "parameters": {},
+      "materials": [
+        "energy_core_mat"
+      ]
+    }
+  ],
+  "world_spec": {
+    "course": {
+      "zones": [
+        {
+          "start_t": 0.0,
+          "end_t": 0.25,
+          "modifier": "flat",
+          "amplitude": 0.1,
+          "frequency": 1.0,
+          "layer": "neon_street",
+          "label": "Market District"
+        },
+        {
+          "start_t": 0.25,
+          "end_t": 0.5,
+          "modifier": "ripple",
+          "amplitude": 0.3,
+          "frequency": 2.0,
+          "layer": "industrial_floor",
+          "label": "Industrial Dock"
+        },
+        {
+          "start_t": 0.5,
+          "end_t": 0.75,
+          "modifier": "dip",
+          "amplitude": 0.4,
+          "frequency": 1.5,
+          "layer": "corporate_glass",
+          "label": "Corporate Tower"
+        },
+        {
+          "start_t": 0.75,
+          "end_t": 1.0,
+          "modifier": "rough",
+          "amplitude": 0.6,
+          "frequency": 3.0,
+          "layer": "underground_rock",
+          "label": "Underground Tunnel"
+        }
+      ]
+    }
+  },
+  "wiring": {
+    "dependencies": [
+      {
+        "source": "controller",
+        "target": "input",
+        "type": "uses"
+      },
+      {
+        "source": "camera",
+        "target": "cinemachine",
+        "type": "references"
+      },
+      {
+        "source": "health",
+        "target": "hud",
+        "type": "triggers"
+      },
+      {
+        "source": "dialogue",
+        "target": "audio",
+        "type": "uses"
+      },
+      {
+        "source": "ai",
+        "target": "navmesh",
+        "type": "references"
+      },
+      {
+        "source": "vfx",
+        "target": "lighting",
+        "type": "triggers"
+      }
+    ]
+  }
+}

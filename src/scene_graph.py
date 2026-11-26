@@ -28,6 +28,7 @@ from typing import Any, Iterable, Mapping, Optional
 from .ident import HashRef, chash
 from .ident.tags import NODE, SCENE
 from .unity_layout_archetype import spatial_relationship_of
+from .unity_entity_names import entity_name_abstention
 from .unity_scene_membership import abstained_entity_names
 from .unity_schema import UnitySchema
 from .unity_spatial_roles import (
@@ -131,6 +132,16 @@ def _duplicate_names(values: Iterable[str]) -> list[str]:
         folded = _casefold(value)
         counts[folded] = counts.get(folded, 0) + 1
     return sorted(key for key, count in counts.items() if count > 1)
+
+
+def _duplicate_name_reason(schema: UnitySchema, folded: str) -> str:
+    """Why the Step 5 entity-name pass left this collision, from its record."""
+    row = entity_name_abstention(schema, folded)
+    if row is None:
+        return (f". {folded!r}: no Step 5 entity-name record "
+                "(src/unity_entity_names.py did not run on this schema)")
+    return (f". {folded!r}: [entity.names] abstained — {row.get('reason')}. "
+            f"Remedy: {row.get('remedy')}")
 
 
 def _scene_membership(schema: UnitySchema, scene_names: list[str], entity_name: str) -> list[str]:
@@ -558,6 +569,7 @@ def build_scene_graph(
         raise SceneGraphError(
             "[graph.strict] duplicate entity names make graph endpoints ambiguous: "
             + ", ".join(duplicates)
+            + "".join(_duplicate_name_reason(schema, name) for name in duplicates)
         )
     if any(not name for name in entity_names):
         raise SceneGraphError("[graph.strict] every declared entity needs a non-empty name")

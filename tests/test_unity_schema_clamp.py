@@ -21,7 +21,7 @@ import pytest
 
 from src.unity_pipeline import UnityPipeline
 from src.unity_prompts import UNITY_CONCEPT_SYSTEM, UNITY_SCHEMA_FILL_SYSTEM
-from src.unity_schema import UnitySchema
+from src.unity_schema import SCENE_CAP, UnitySchema
 from src.unity_schema_clamp import (
     capped_fields, clamp_capped_lists, render_cap_reminder,
 )
@@ -47,7 +47,7 @@ def test_caps_come_from_the_schema_itself():
     assert caps["scripts"] == 24
     assert caps["entities"] == 40
     assert caps["packages"] == 20
-    assert caps["scene_specs"] == 8
+    assert caps["scene_specs"] == SCENE_CAP == 12
 
 
 def test_retry_reminder_states_the_enforced_numbers():
@@ -119,13 +119,13 @@ def test_a_list_inside_its_cap_is_left_exactly_as_written():
 def test_entities_scene_specs_and_packages_are_clamped_too():
     raw = {
         "entities":    [{"name": f"E{i}"} for i in range(60)],
-        "scene_specs": [{"name": f"S{i}"} for i in range(12)],
+        "scene_specs": [{"name": f"S{i}"} for i in range(SCENE_CAP + 4)],
         "packages":    [{"description": f"package {i}"} for i in range(25)],
     }
     clamp_capped_lists(raw)
 
     assert len(raw["entities"]) == 40
-    assert len(raw["scene_specs"]) == 8
+    assert len(raw["scene_specs"]) == SCENE_CAP
     assert len(raw["packages"]) == 20
 
 

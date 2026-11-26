@@ -651,11 +651,17 @@ def unity_validate(
     from src.unity_pipeline import _check_consistency, _programmatic_fix
 
     schema = _programmatic_fix(schema, compose=compose)
+    from src.unity_schema_clamp import scene_cap_warnings
+    for msg in scene_cap_warnings(schema):
+        console.print(f"[yellow]WARN[/]  {msg}")
     schema, _consistency_fixes = _check_consistency(
         schema, reconcile_scenes=False
     )
     for msg in _consistency_fixes:
         console.print(f"  [magenta]FIX[/]  {msg}")
+    from src.unity_entity_names import entity_name_warnings
+    for msg in entity_name_warnings(schema):
+        console.print(f"[yellow]WARN[/]  {msg}")
     schema = resolver.inject_required_packages(schema)
     # One resolver execution, after replay fixers have added every required
     # script/package/behavior. This mirrors the live pipeline authority order.

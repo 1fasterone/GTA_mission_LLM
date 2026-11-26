@@ -23,7 +23,9 @@ from .micro_pipeline     import to_pascal
 from .unity_schema       import (NORMALIZATION_META_KEY, UnityPackage,
                                  UnitySchema, UnityScript, is_embodied,
                                  normalization_issues)
-from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
+from .unity_schema_clamp import (clamp_capped_lists, clamp_scene_names,
+                                 render_cap_reminder, scene_cap_warnings)
+from .unity_entity_names import disambiguate_entity_names, entity_name_warnings
 from .unity_schema_jsonschema import response_format_schema
 from .capability_resolver import resolve_capabilities, resolve_microgens
 from .unity_asset_catalog import asset_vocabulary
@@ -408,7 +410,11 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
         if clean and clean not in seen:
             seen.add(clean)
             scenes.append(clean)
-    schema.scenes = scenes[:8] or ["Main"]
+    schema.scenes = scenes or ["Main"]
+    # SCENE_CAP, the same number scene_specs enforces. A drop is recorded in
+    # meta["schema_clamp"]["scenes"] with what each dropped scene hosted, and
+    # warned by the caller (scene_cap_warnings), never truncated silently.
+    clamp_scene_names(schema)
 
     # "Main" must be first — Unity treats the first build-settings scene as entry point
     if "Main" not in schema.scenes:
@@ -585,6 +591,12 @@ def _check_consistency(schema: UnitySchema, *,
     Returns (fixed_schema, list_of_fix_messages).
     """
     fixes: list[str] = []
+
+    # One name, one entity group — first, because every pass below and the
+    # scene graph key entities by name. A collision is collapsed (identical
+    # copies), renamed by scene (one listing per copy) or abstained on by name
+    # in meta["entity_names"] (src/unity_entity_names.py).
+    fixes.extend(disambiguate_entity_names(schema))
 
     # Helper re-derived each call so injections made above are visible below.
     def _stypes() -> set[str]:
@@ -2244,10 +2256,14 @@ class UnityPipeline:
         self._step(5, "Programmatic fixer + consistency check")
         schema = _programmatic_fix(schema, compose=compose)
         self._ok("Programmatic fixes applied (naming, scenes, script names)")
+        for msg in scene_cap_warnings(schema):
+            self._warn(msg)
 
         schema, fix_msgs = _check_consistency(schema, reconcile_scenes=False)
         for msg in fix_msgs:
             self._fix(msg)
+        for msg in entity_name_warnings(schema):
+            self._warn(msg)
         if not fix_msgs:
             self._ok("Schema is consistent — no fixes needed")
 
