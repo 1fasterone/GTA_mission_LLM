@@ -5,7 +5,7 @@ default: a `chat()` that passes no `max_tokens` inherits it. That is no ceiling
 worth the name. 88,000 is above LM Studio's loaded context (47,360, see
 `lms ps`), so a runaway reply stops only at the context wall.
 
-Two live runaways set the caps here:
+Three live runaways set the caps here:
 
 - 2026-11-14, Step 3.5: one NPC-dialog call (12 lines, about 700 tokens when
   healthy) generated about 76,000 tokens over 53 minutes at temperature 0
@@ -15,6 +15,9 @@ Two live runaways set the caps here:
   minutes before it was killed by hand. It wrote 118 KB and 235 `scripts`
   entries. 193 of them repeated earlier entries, almost all from a cycle of 9
   `...Manager` scripts, and the reply never reached `missions`.
+- 2026-11-18, Step 3: the Unity schema fill of neon E2E wave 2 run 03 ran past
+  25,000 tokens in 23 minutes under the first cap of 30,000 and was stopped by
+  hand. The Unity fill cap is now 15,000.
 
 Every structured call takes its `max_tokens` from here, so the caps live in
 one place. A `Budget` is a fixed overhead plus a per-item allowance times the
@@ -22,7 +25,8 @@ item count the caller asks for, clamped to [floor, ceiling]. The sizes are
 roughly 3-6x the completions measured in the LM Studio server logs (none of
 the measured replies was cut off), so a healthy reply is never truncated and a
 degenerate one fails within a bounded time instead of running to the context
-wall.
+wall. The Unity Step 3 fill is the one exception, by the user's choice: its
+cap is only 1.31x its largest measured healthy fill (see SCHEMA_FILL_TOKENS).
 
 A reply the server cut off at its cap (`finish_reason == "length"`) is never
 parsed as complete. `capped_chat` logs it loudly and returns None, and each
@@ -78,15 +82,28 @@ MICRO_CODE_TOKENS = 6000
 # `extract_dialog_lines(count=0)` asks for the system prompt's default 3-6 lines.
 DIALOG_DEFAULT_LINES = 6
 
-# Step 3 Unity schema fill (src/unity_pipeline.py). Measured: 13 healthy fills in
-# the LM Studio logs of 2026-11-14 and 2026-11-17 (qwen3.5-9b, all
-# finish_reason=stop, 4.4-6.6 min each): median 7,993 / max 10,067 completion
-# tokens. Every November log gives n=21, median 7,123, the same max of 10,067.
-# About 3x that max -> 30,000. The largest measured prompt was 9,948 tokens, so
-# prompt plus cap (39,948) still fits the 47,360-token loaded context, and the
-# cap is reached before the context wall.
-SCHEMA_FILL_HEALTHY_MAX_TOKENS = 10_067
-SCHEMA_FILL_TOKENS = 30_000
+# Step 3 Unity schema fill (src/unity_pipeline.py). Measured: 16 healthy fills in
+# the LM Studio logs of 2026-11-14 to 2026-11-19 (qwen3.5-9b, all
+# finish_reason=stop, 4.4-7.7 min each): min 6,608, median 7,929, mean 8,139,
+# max 11,418 completion tokens. The largest prompt was 9,948 tokens. The max is
+# neon E2E wave 2 run 04 (2026-11-19). Every list item in that reply was
+# distinct: 25 entities, 20 scripts, 8 scenes, 3 missions. It was a large
+# healthy fill, not a loop.
+#
+# 15,000 is the user's choice of 2026-11-19 ("Yes, 15,000"), 1.31x that max,
+# made to bound how long a runaway can run. It is not the ~3x rule the Step 3.5
+# caps follow. The first cap, 30,000, still let a runaway run 20-25 minutes
+# before the colder retry. On 2026-11-18 neon E2E wave 2 run 03 passed 25,000
+# tokens in 23 minutes and was stopped by hand. A cap of 12,000 was tried next,
+# and run 04's healthy 11,418 came within 5% of it. At about 25 tokens/s, a
+# runaway now ends after about 10 minutes.
+#
+# The tradeoff: a healthy fill larger than 15,000 tokens is now cut off too. It
+# fails that attempt loudly and the colder retry runs; it is never repaired
+# into a schema. None of the 333 healthy Unity fills in every log since 2025-07
+# was that large; the largest is run 04's 11,418.
+SCHEMA_FILL_HEALTHY_MAX_TOKENS = 11_418
+SCHEMA_FILL_TOKENS = 15_000
 # The visual compile's own fill cap, older than SCHEMA_FILL_TOKENS. Its
 # cardinality is closed, so it is never allowed to exceed this.
 VISUAL_COMPILE_FILL_TOKENS = 32_000
@@ -142,9 +159,11 @@ def schema_fill_truncated(max_tokens: int, chars: int) -> ReplyTruncatedError:
 
     The remedy depends on where the cap came from. A cap below the measured
     budget came from the config, and the remedy is to raise the config to the
-    budget, which the fill never exceeds. At the budget, the reply was about
-    three times longer than any healthy fill measured, so it is a runaway.
-    Raising the cap only makes the loop longer.
+    budget, which the fill never exceeds. At the budget, the reply was longer
+    than any healthy fill measured, so it is most likely a runaway, and raising
+    the cap only makes the loop longer. The budget sits only about 1.3x above
+    the largest healthy fill, though, so the message also says how to tell a
+    large healthy fill apart: its tail does not repeat.
     """
     if max_tokens < SCHEMA_FILL_TOKENS:
         remedy = (
@@ -159,7 +178,9 @@ def schema_fill_truncated(max_tokens: int, chars: int) -> ReplyTruncatedError:
             f"Healthy fills measure at most {SCHEMA_FILL_HEALTHY_MAX_TOKENS:,} "
             f"tokens, so this is likely a runaway generation (usually a list "
             f"repeating itself). Raising the cap only lengthens the loop. "
-            f"Re-run, or tighten the brief."
+            f"Re-run, or tighten the brief. The cap is only about 1.3x the "
+            f"largest healthy fill: if the raw response does not repeat, this "
+            f"was a large healthy fill, and a tighter brief is the remedy."
         )
     return ReplyTruncatedError("Step 3 schema fill", max_tokens, chars, remedy)
 

@@ -51,13 +51,20 @@ _FIXTURE_SHA256 = "a006cb450fa759682ad9a6f78aaa25a48d012b0697a9a9c8f22d6a26a28bb
 _CONCEPT = "A rain-soaked cyberpunk city where a bounty hunter races a hoverbike. PC, 3D."
 _PROMPT = "a bounty hunter chases fugitives through a neon city on a hoverbike"
 
-# Unity Step 3 fills in the LM Studio server logs of 2026-11-14 and 2026-11-17:
+# Unity Step 3 fills in the LM Studio server logs of 2026-11-14 to 2026-11-19:
 # usage.completion_tokens of every "Generated prediction" whose reply is a
-# UnitySchema fill, paired with its "Running chat completion" line. All 13
-# finished with finish_reason=stop, in 4.4-6.6 minutes each.
+# UnitySchema fill, paired with its "Running chat completion" line. All 16
+# finished with finish_reason=stop, in 4.4-7.7 minutes each. (The killed run 03
+# reply of 2026-11-17 has no completion_tokens and is not a healthy fill.) The
+# 11,418 is neon E2E wave 2 run 04 (2026-11-19), a large fill with every list
+# item distinct.
 _MEASURED_HEALTHY_FILLS = (8026, 7993, 8918, 7766, 6816, 7415, 10067,
-                           7865, 9487, 7123, 7062, 8206, 8046)
+                           7865, 9487, 7123, 7062, 8206, 8046, 6608, 7408,
+                           11418)
 _MEASURED_MAX_PROMPT_TOKENS = 9948    # largest prompt_tokens among those fills
+# The largest healthy Unity fill (finish_reason=stop, reasoning off) in every
+# LM Studio log since 2025-07 (n=333): the same run 04 fill.
+_ALL_TIME_HEALTHY_MAX = 11418
 _LOADED_CONTEXT = 47360               # `lms ps`, qwen3.5-9b on the E2E machine
 _GLOBAL_MAX_TOKENS = 88000            # config.yaml lm_studio.max_tokens there
 
@@ -200,7 +207,8 @@ def test_a_cut_off_fill_is_a_failed_attempt_and_the_colder_retry_runs(tmp_path):
     first, second = diagnostics.fill_attempts
     assert first["error_type"] == "ReplyTruncatedError"
     assert first["raw_response"] == runaway            # kept for diagnosis
-    assert "30,000-token cap" in first["error"] and "118,392 chars" in first["error"]
+    assert f"{SCHEMA_FILL_TOKENS:,}-token cap" in first["error"]
+    assert "118,392 chars" in first["error"]
     assert second["error"] is None
     assert diagnostics.schema_source == "schema_llm"
     assert diagnostics.schema.project_name == "NeonBounty"
@@ -266,14 +274,18 @@ def test_a_config_below_the_budget_keeps_its_own_cap(tmp_path):
 # ── (c) the budget is pinned to the measured fills ─────────────────────────────
 
 def test_the_fill_budget_is_pinned_to_the_measured_healthy_fills():
-    assert len(_MEASURED_HEALTHY_FILLS) == 13
-    assert statistics.median(_MEASURED_HEALTHY_FILLS) == 7993
-    assert max(_MEASURED_HEALTHY_FILLS) == SCHEMA_FILL_HEALTHY_MAX_TOKENS == 10067
+    assert len(_MEASURED_HEALTHY_FILLS) == 16
+    assert statistics.median(_MEASURED_HEALTHY_FILLS) == 7929
+    assert min(_MEASURED_HEALTHY_FILLS) == 6608
+    assert max(_MEASURED_HEALTHY_FILLS) == SCHEMA_FILL_HEALTHY_MAX_TOKENS == 11418
 
+    # The user's choice ("Yes, 15,000"): a tight cap, not the ~3x rule.
     # Changing the budget means re-measuring: update the samples above too.
-    assert SCHEMA_FILL_TOKENS == 30_000
+    assert SCHEMA_FILL_TOKENS == 15_000
     ratio = SCHEMA_FILL_TOKENS / SCHEMA_FILL_HEALTHY_MAX_TOKENS
-    assert 2.5 <= ratio <= 3.5, ratio
+    assert 1.1 <= ratio <= 1.5, ratio
+    # It still cuts no healthy fill ever measured, the all-time largest included.
+    assert SCHEMA_FILL_TOKENS > max(max(_MEASURED_HEALTHY_FILLS), _ALL_TIME_HEALTHY_MAX)
     # The cap must be reached before the context wall, or it stops nothing.
     assert SCHEMA_FILL_TOKENS + _MEASURED_MAX_PROMPT_TOKENS < _LOADED_CONTEXT
     assert SCHEMA_FILL_TOKENS < _GLOBAL_MAX_TOKENS
@@ -297,12 +309,15 @@ def test_the_smallest_applicable_cap_wins(visual_compile, configured, expected):
 def test_the_truncation_remedy_depends_on_where_the_cap_came_from():
     runaway = schema_fill_truncated(SCHEMA_FILL_TOKENS, 118_392)
     assert isinstance(runaway, ValueError)
-    assert "30,000-token cap" in str(runaway) and "118,392 chars" in str(runaway)
+    assert f"{SCHEMA_FILL_TOKENS:,}-token cap" in str(runaway)
+    assert "118,392 chars" in str(runaway)
     assert "likely a runaway" in str(runaway)
     assert "only lengthens the loop" in str(runaway)
+    # The cap is tight, so the message also names the other possible cause.
+    assert "does not repeat, this was a large healthy fill" in str(runaway)
 
     small = schema_fill_truncated(8192, 20_000)
-    assert "Raise lm_studio.max_tokens to 30,000" in str(small)
+    assert f"Raise lm_studio.max_tokens to {SCHEMA_FILL_TOKENS:,}" in str(small)
     assert "runaway" not in str(small)
 
 
