@@ -1,12 +1,66 @@
 // Auto-generated — DO NOT EDIT
 // Atom-driven behavior for entity '{{ entity.name }}'.
 // Attached at runtime by EntitySpawner via AddComponent("{{ class_name }}").
+{% if trigger == "player_contact" %}
+// Trigger: player_contact. The sequence runs once, when a collider tagged
+// Player (or one whose attached rigidbody is tagged Player) enters this entity.
+{% elif trigger == "death" %}
+// Trigger: death. The sequence runs once, when OnDeath() is called on this
+// entity. EntitySpawner attaches no health component, so nothing calls it yet:
+// the sequence stays dormant rather than running at spawn (meta.atom_bindings).
+{% endif %}
 using System.Collections;
 using UnityEngine;
 
 public class {{ class_name }} : MonoBehaviour
 {
+{% if trigger == "spawn" %}
     private void Start() => StartCoroutine(Run());
+{% elif trigger == "player_contact" %}
+    private bool _ran;
+
+    // Start runs after EntitySpawner's AddComponent calls, so the entity's
+    // collider exists by now. A contact sequence needs a trigger: the player
+    // passes into the entity instead of bumping off it.
+    private void Start()
+    {
+{% if physics_2d %}
+        foreach (var c in GetComponents<Collider2D>()) c.isTrigger = true;
+{% else %}
+        foreach (var c in GetComponents<Collider>()) c.isTrigger = true;
+{% endif %}
+    }
+
+{% if physics_2d %}
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        var body = other.attachedRigidbody != null ? other.attachedRigidbody.gameObject : null;
+        if (_ran || !IsPlayer(other.gameObject, body)) return;
+        _ran = true;
+        StartCoroutine(Run());
+    }
+{% else %}
+    private void OnTriggerEnter(Collider other)
+    {
+        var body = other.attachedRigidbody != null ? other.attachedRigidbody.gameObject : null;
+        if (_ran || !IsPlayer(other.gameObject, body)) return;
+        _ran = true;
+        StartCoroutine(Run());
+    }
+{% endif %}
+
+    private static bool IsPlayer(GameObject hit, GameObject body)
+        => hit.CompareTag("Player") || (body != null && body.CompareTag("Player"));
+{% elif trigger == "death" %}
+    private bool _ran;
+
+    public void OnDeath()
+    {
+        if (_ran) return;
+        _ran = true;
+        StartCoroutine(Run());
+    }
+{% endif %}
 
     private IEnumerator Run()
     {

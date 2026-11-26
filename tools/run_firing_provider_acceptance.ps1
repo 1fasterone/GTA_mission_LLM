@@ -7,8 +7,12 @@
 # appear: the R3 provider's FIRING_PROVIDER_SHARED_GATE_PASS,
 # FIRING_PROVIDER_POOL_PASS and FIRING_PROVIDER_NO_PROVIDER_PASS; the Slice 4
 # firearm adapter's FIREARM_FALLBACK_PASS, FIREARM_ANIM_EVENT_PASS and
-# FIREARM_INCOMPATIBLE_PASS; and R4's RELOAD_PROVIDER_NO_PROVIDER_PASS plus one
-# RELOAD_PROVIDER_VARIANT_PASS for every reload shooter the generator names.
+# FIREARM_INCOMPATIBLE_PASS; R4's RELOAD_PROVIDER_NO_PROVIDER_PASS plus one
+# RELOAD_PROVIDER_VARIANT_PASS for every reload shooter the generator names; and
+# the entity triggers' ENTITY_TRIGGER_UNTOUCHED_PASS,
+# ENTITY_TRIGGER_RIGIDBODY_CONTACT_PASS, ENTITY_TRIGGER_CHARACTER_CONTACT_PASS and
+# ENTITY_TRIGGER_UNTAGGED_PASS (a collect sequence runs on Player contact from
+# either player body, never at spawn, and Despawn self removes its host).
 #
 #   pwsh -File tools/run_firing_provider_acceptance.ps1 [-Editor <Unity.exe>]
 #
@@ -95,7 +99,8 @@ Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\FiringProvi
 $playTestDir = Join-Path $projectPath "Assets\Tests\PlayMode"
 New-Item -ItemType Directory -Path $playTestDir -Force | Out-Null
 foreach ($file in @("FiringProvider.PlayModeTests.asmdef", "FiringProviderPlayModeTests.cs",
-                   "FirearmAdapterPlayModeTests.cs", "ReloadProviderPlayModeTests.cs")) {
+                   "FirearmAdapterPlayModeTests.cs", "ReloadProviderPlayModeTests.cs",
+                   "EntityTriggerPlayModeTests.cs")) {
     Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\$file") `
         -Destination $playTestDir -Force
 }
@@ -109,15 +114,16 @@ if ($compileErrors) { throw "Generated project contains C# errors. Log=$compileL
 $playExit = Invoke-UnityEditor -EditorPath $Editor -Arguments @(
     "-batchmode", "-nographics", "-runTests", "-projectPath", $projectPath,
     "-testPlatform", "PlayMode", "-testFilter",
-    "FiringProviderPlayModeTests;FirearmAdapterPlayModeTests;ReloadProviderPlayModeTests",
+    "FiringProviderPlayModeTests;FirearmAdapterPlayModeTests;ReloadProviderPlayModeTests;EntityTriggerPlayModeTests",
     "-testResults", $testResults, "-logFile", $playLog)
 if (-not (Test-Path -LiteralPath $testResults)) {
     throw "Unity produced no Play Mode results. Exit=$playExit Log=$playLog"
 }
 [xml]$results = Get-Content -Raw -LiteralPath $testResults
 $run = $results."test-run"
-# 3 R3 + 3 Slice 4 cases, then one R4 case per reload shooter plus no-provider.
-$expectedPassed = 6 + $reloadShooters.Count + 1
+# 3 R3 + 3 Slice 4 cases, one R4 case per reload shooter plus no-provider,
+# then 4 entity-trigger cases.
+$expectedPassed = 6 + $reloadShooters.Count + 1 + 4
 if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt $expectedPassed) {
     throw ("Firing-provider Play Mode tests failed. Exit=$playExit Passed=$($run.passed) " +
         "Failed=$($run.failed) Log=$playLog Results=$testResults")
@@ -125,7 +131,9 @@ if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt $expecte
 $markers = @("FIRING_PROVIDER_SHARED_GATE_PASS", "FIRING_PROVIDER_POOL_PASS",
              "FIRING_PROVIDER_NO_PROVIDER_PASS", "FIREARM_FALLBACK_PASS",
              "FIREARM_ANIM_EVENT_PASS", "FIREARM_INCOMPATIBLE_PASS",
-             "RELOAD_PROVIDER_NO_PROVIDER_PASS")
+             "RELOAD_PROVIDER_NO_PROVIDER_PASS", "ENTITY_TRIGGER_UNTOUCHED_PASS",
+             "ENTITY_TRIGGER_RIGIDBODY_CONTACT_PASS", "ENTITY_TRIGGER_CHARACTER_CONTACT_PASS",
+             "ENTITY_TRIGGER_UNTAGGED_PASS")
 $proof = @(Select-String -Path $testResults -Pattern (($markers + "RELOAD_PROVIDER_VARIANT_PASS") -join "|") |
     ForEach-Object { $_.Line.Trim() })
 foreach ($marker in $markers) {

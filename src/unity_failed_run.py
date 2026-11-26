@@ -185,7 +185,11 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
      "ran after _reconcile_scene_specs added the entity. Compare "
      "schema.meta.scene_membership in the saved schema, give the entity a "
      "scene in scene_specs[].entities or remove it, then replay with "
-     "unity-validate."),
+     "unity-validate. A 'duplicate entity names' refusal reaches it only when "
+     "the Step 5 entity-name pass (src/unity_entity_names.py) could not prove "
+     "which group each name means: read schema.meta.entity_names.abstentions, "
+     "give each group its own name in entities[] and in every scene_spec or "
+     "reference that means it, or merge identical groups, then replay."),
     ("SceneInputError", "authored_scene",
      "The Scene Compiler layout could not be read or bound. Check the layout "
      "file and its model paths (docs/SCENE_COMPILER.md)."),

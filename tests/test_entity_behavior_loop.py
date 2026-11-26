@@ -18,7 +18,8 @@ from src.atoms import ATOM_REGISTRY
 from src.atoms.backends.unity import unity_coroutine_body
 from src.atoms.base import AtomInvocation
 from src.atoms.behavior_map import _BEHAVIOR_MAP, behavior_loops
-from src.unity_generator import UnityProjectGenerator
+from src.unity_generator import (UnityProjectGenerator, entity_behavior_class_name,
+                                 entity_behavior_entry)
 from src.unity_schema import EntitySpec, UnitySchema
 
 _RESTART = "StartCoroutine(Run())"
@@ -91,10 +92,12 @@ def _generate_entities(**sequences: list[AtomInvocation]) -> dict[str, str]:
     return {name: files[f"LoopProof/Assets/Scripts/{name}Behavior.cs"] for name in sequences}
 
 
-def _render_behavior(atoms: list[AtomInvocation]) -> str:
+def _render_behavior(atoms: list[AtomInvocation], game_type: str = "3D") -> str:
     generator = UnityProjectGenerator("templates/unity")
     entity = EntitySpec(name="Probe", kind="prop", count=1, behavior="ProbeBehavior", atoms=atoms)
     return generator._render("EntityBehavior.cs.j2", {
+        # The generator's own entry-point context (trigger + physics).
+        **entity_behavior_entry(atoms, game_type),
         "entity": entity,
         "class_name": "ProbeBehavior",
         "atom_body": unity_coroutine_body([inv.model_dump() for inv in atoms]),
@@ -151,3 +154,338 @@ def test_every_behavior_map_sequence_renders_its_loop_shape(behavior):
         _assert_loops_in_place(cs)
     else:
         _assert_runs_once(cs)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Despawn "self" and trigger-gated entry points
+#
+# `Despawn self` used to lower to GameObject.Find("self"), which matches
+# nothing, so every canned collect/pickup/die sequence left its host standing.
+# Fixing that alone would have destroyed every pickup the frame it spawned,
+# because every sequence ran from Start() and "Collectible", "soldier" or
+# "purchase" matched collect/die/chase by substring. The trigger now comes from
+# the atoms themselves (behavior_map.behavior_trigger).
+# ══════════════════════════════════════════════════════════════════════════════
+
+from src.atom_bindings import DEATH_DORMANT_FINDING  # noqa: E402
+from src.atoms.backends.unity import unity_atom_snippet  # noqa: E402
+from src.atoms.behavior_map import (  # noqa: E402
+    TRIGGER_DEATH,
+    TRIGGER_PLAYER_CONTACT,
+    TRIGGER_SPAWN,
+    behavior_keyword,
+    behavior_trigger,
+    expand_behavior,
+)
+
+_SPAWN_ENTRY = "private void Start() => StartCoroutine(Run());"
+
+
+def _canned(behavior: str) -> list[AtomInvocation]:
+    return [AtomInvocation(**a) for a in _BEHAVIOR_MAP[behavior]]
+
+
+def _generate(game_type: str = "3D", **sequences: list[AtomInvocation]):
+    entities = [EntitySpec(name=name, kind="prop", count=1, behavior="", atoms=atoms)
+                for name, atoms in sequences.items()]
+    schema = UnitySchema(project_name="TriggerProof", game_type=game_type, platform="PC",
+                         render_pipeline="URP", scenes=["MainMenu", "Main"],
+                         entities=entities)
+    generator = UnityProjectGenerator("templates/unity")
+    files = generator.generate(schema, {})
+    return generator, {
+        name: files[f"TriggerProof/Assets/Scripts/{entity_behavior_class_name(name)}.cs"]
+        for name in sequences}, files
+
+
+def test_no_generated_class_looks_itself_up_by_the_name_self():
+    _, _, files = _generate(**{key.title().replace("_", ""): _canned(key)
+                               for key in _BEHAVIOR_MAP})
+    offenders = [path for path, text in files.items()
+                 if path.endswith(".cs") and 'Find("self")' in text]
+    assert offenders == []
+
+
+@pytest.mark.parametrize("token", ["self", "Self", "SELF", " self "])
+def test_despawn_self_destroys_the_host(token):
+    assert unity_atom_snippet("Despawn", {"entity": token}) == "Destroy(gameObject);"
+
+
+def test_despawn_by_name_still_finds_the_named_object():
+    assert unity_atom_snippet("Despawn", {"entity": "Gate"}) == (
+        'var _dgo = GameObject.Find("Gate");\nif (_dgo != null) Destroy(_dgo);')
+
+
+@pytest.mark.parametrize("atom, component", [("SetHealth", "HealthSystem"),
+                                             ("EquipWeapon", "Inventory")])
+def test_set_health_and_equip_weapon_honour_self(atom, component):
+    code = unity_atom_snippet(atom, {"entity": "self", "value": 5, "weapon": "rifle"})
+    first = code.splitlines()[0]
+    assert first.endswith(" = gameObject;") and "Find" not in code
+    assert f"GetComponent<{component}>()" in code
+    # 'Player' keeps its historical reading: the host, via the ternary.
+    player = unity_atom_snippet(atom, {"entity": "Player", "value": 5, "weapon": "rifle"})
+    assert '"Player" == "Player" ? gameObject : GameObject.Find("Player")' in player
+
+
+@pytest.mark.parametrize("behavior", ["collect", "pickup"])
+def test_collect_and_pickup_run_on_player_contact_never_at_start(behavior):
+    _, rendered, _ = _generate(Probe=_canned(behavior))
+    cs = rendered["Probe"]
+    assert _SPAWN_ENTRY not in cs
+    start, _ = _block_after(cs, "private void Start()")
+    assert "StartCoroutine" not in start
+    assert "foreach (var c in GetComponents<Collider>()) c.isTrigger = true;" in start
+    contact, _ = _block_after(cs, "private void OnTriggerEnter(Collider other)")
+    assert "if (_ran || !IsPlayer(other.gameObject, body)) return;" in contact
+    assert contact.rstrip().endswith("StartCoroutine(Run());")
+    assert 'hit.CompareTag("Player") || (body != null && body.CompareTag("Player"))' in cs
+    assert "Collider2D" not in cs and "OnTriggerEnter2D" not in cs
+    assert "Destroy(gameObject);" in cs
+    _assert_runs_once(cs)
+
+
+@pytest.mark.parametrize("game_type", ["2D", "2d_topdown"])
+def test_a_2d_contact_listens_on_2d_physics_only(game_type):
+    _, rendered, _ = _generate(game_type=game_type, Probe=_canned("collect"))
+    cs = rendered["Probe"]
+    assert "private void OnTriggerEnter2D(Collider2D other)" in cs
+    assert "foreach (var c in GetComponents<Collider2D>()) c.isTrigger = true;" in cs
+    assert "OnTriggerEnter(Collider other)" not in cs
+    assert "GetComponents<Collider>()" not in cs
+
+
+def test_die_waits_for_on_death_and_has_no_start():
+    _, rendered, _ = _generate(Probe=_canned("die"))
+    cs = rendered["Probe"]
+    assert "private void Start()" not in cs
+    on_death, _ = _block_after(cs, "public void OnDeath()")
+    assert on_death.split() == "if (_ran) return; _ran = true; StartCoroutine(Run());".split()
+    _assert_runs_once(cs)
+
+
+@pytest.mark.parametrize("behavior", sorted(set(_BEHAVIOR_MAP) - {"collect", "pickup", "die"}))
+def test_spawn_sequences_keep_their_start_entry(behavior):
+    cs = _render_behavior(_canned(behavior))
+    assert cs.splitlines()[:5] == [
+        "// Auto-generated — DO NOT EDIT",
+        "// Atom-driven behavior for entity 'Probe'.",
+        '// Attached at runtime by EntitySpawner via AddComponent("ProbeBehavior").',
+        "using System.Collections;",
+        "using UnityEngine;",
+    ]
+    assert cs.count(_SPAWN_ENTRY) == 1
+    for marker in ("OnTriggerEnter", "OnDeath", "_ran", "isTrigger", "IsPlayer"):
+        assert marker not in cs
+
+
+def test_trigger_is_read_from_the_exact_canned_sequence():
+    assert behavior_trigger(_canned("collect")) == TRIGGER_PLAYER_CONTACT
+    assert behavior_trigger(_canned("pickup")) == TRIGGER_PLAYER_CONTACT
+    assert behavior_trigger(_canned("die")) == TRIGGER_DEATH
+    assert behavior_trigger(_canned("patrol")) == TRIGGER_SPAWN
+    assert behavior_trigger([]) == TRIGGER_SPAWN
+    # A saved schema's JSON dicts carry the same trigger, and a step label is
+    # a comment, not behaviour.
+    assert behavior_trigger([dict(a) for a in _BEHAVIOR_MAP["collect"]]) == TRIGGER_PLAYER_CONTACT
+    relabelled = [AtomInvocation(atom=a.atom, args=a.args, label="x") for a in _canned("die")]
+    assert behavior_trigger(relabelled) == TRIGGER_DEATH
+
+
+@pytest.mark.parametrize("change", ["arg", "extra_step", "dropped_step"])
+def test_a_modified_canned_sequence_starts_at_spawn(change):
+    atoms = _canned("collect")
+    if change == "arg":
+        atoms[0] = AtomInvocation(atom="PlaySFX", args={"sound": "coin", "volume": 0.8})
+    elif change == "extra_step":
+        atoms.insert(0, AtomInvocation(atom="Wait", args={"seconds": 3.0}))
+    else:
+        atoms = atoms[1:]
+    assert behavior_trigger(atoms) == TRIGGER_SPAWN
+
+
+@pytest.mark.parametrize("text, key", [
+    ("patrol", "patrol"),
+    ("patrolling the gate", "patrol"),
+    ("Collectible", "collect"),
+    ("PlayerCollectible", "collect"),
+    ("collected on touch", "collect"),
+    ("pick up the coin", "pickup"),
+    ("dies when shot", "die"),
+    ("chasing the player", "chase"),
+    ("guard the vault", "guard"),
+    ("intro_fade", "intro_fade"),
+    ("screen transition", "screen_transition"),
+    ("HUDPanel idles", "idle"),
+    # Substring false positives the whole-token rule ends.
+    ("soldier", None),
+    ("diesel generator", None),
+    ("purchase counter", None),
+    ("guardrail", None),
+    ("recollection", None),
+    ("fade the intro", None),
+    ("", None),
+])
+def test_expand_behavior_matches_whole_words_only(text, key):
+    assert behavior_keyword(text) == key
+    expected = [] if key is None else _canned(key)
+    assert expand_behavior(text) == expected
+
+
+def test_atom_routes_name_each_trigger_and_the_dormant_death():
+    generator, _, _ = _generate(Coin=_canned("collect"), Zombie=_canned("die"),
+                                Guard=_canned("guard"))
+    record = generator.last_atom_bindings
+    coin = record.route("entities[Coin].atoms")
+    zombie = record.route("entities[Zombie].atoms")
+    guard = record.route("entities[Guard].atoms")
+    assert (coin.trigger, coin.phase, coin.finding) == ("player_contact", "start_coroutine_once", None)
+    assert (guard.trigger, guard.phase, guard.finding) == ("entity_spawn", "start_coroutine_loop", None)
+    assert zombie.trigger == "death" and zombie.finding == DEATH_DORMANT_FINDING
+    # EntitySpawner still adds the class: the death route is attached, and dormant.
+    assert zombie.host == "EntitySpawner.AddComponent" and zombie.scenes == ["Main"]
+
+
+def test_the_editor_acceptance_runs_the_entity_trigger_cases():
+    from pathlib import Path
+
+    from tools.generate_firing_provider_acceptance import (CONTACT_ENTITY_ATOMS,
+                                                           RELOAD_ENTITY_ATOMS)
+
+    root = Path(__file__).resolve().parents[1]
+    assert behavior_trigger(CONTACT_ENTITY_ATOMS) == TRIGGER_PLAYER_CONTACT
+    assert behavior_trigger(RELOAD_ENTITY_ATOMS) == TRIGGER_SPAWN
+    assert RELOAD_ENTITY_ATOMS[-1].args == {"entity": "self"}
+    runner = (root / "tools/run_firing_provider_acceptance.ps1").read_text(encoding="utf-8")
+    assert '"EntityTriggerPlayModeTests.cs")' in runner
+    assert "ReloadProviderPlayModeTests;EntityTriggerPlayModeTests" in runner
+    markers = ("ENTITY_TRIGGER_UNTOUCHED_PASS", "ENTITY_TRIGGER_RIGIDBODY_CONTACT_PASS",
+               "ENTITY_TRIGGER_CHARACTER_CONTACT_PASS", "ENTITY_TRIGGER_UNTAGGED_PASS")
+    for marker in markers:
+        assert f'"{marker}"' in runner
+    assert "$expectedPassed = 6 + $reloadShooters.Count + 1 + 4" in runner
+    test = (root / "tests/unity_firing_provider/EntityTriggerPlayModeTests.cs"
+            ).read_text(encoding="utf-8")
+    assert "coin.AddComponent<CoinBehavior>();" in test
+    # One [UnityTest] per marker, so the runner's expected count stays honest.
+    assert test.count("[UnityTest]") == len(markers)
+    assert all(marker in test for marker in markers)
+    reload_test = (root / "tests/unity_firing_provider/ReloadProviderPlayModeTests.cs"
+                   ).read_text(encoding="utf-8")
+    assert 'Assert.IsTrue(host == null, "ArmoryBehavior did not despawn its own host.");' in reload_test
+
+
+@pytest.mark.parametrize("game_type, behavior", [
+    ("3D", "collect"), ("2D", "collect"), ("3D", "die"), ("3D", "patrol"),
+])
+def test_each_entry_shape_compiles_against_real_unity(game_type, behavior):
+    from tests.test_reload_provider import _compile
+
+    cs = _render_behavior(_canned(behavior), game_type)
+    check = _compile({"Assets/Scripts/ProbeBehavior.cs": cs})
+    assert check.accepted, (game_type, behavior, check.errors)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2D spawn paths attach the behavior (review of #309)
+# ══════════════════════════════════════════════════════════════════════════════
+# BuildSideScroller2D / BuildTopDown2D place groups through PlaceRow2D /
+# PlaceGroup2DTopDown, which used to add no behavior component at all: a 2D
+# collect/pickup handler (or any atom sequence) never ran. Both now attach it
+# exactly as SpawnGroup does, and the binding report names the groups those
+# builders leave out instead of calling them attached.
+
+_PLACERS = {"2D": "PlaceRow2D", "2d_topdown": "PlaceGroup2DTopDown"}
+
+
+def _spawner(game_type: str, *entities: EntitySpec, locomotion: str = "walk"):
+    schema = UnitySchema(project_name="TriggerProof", game_type=game_type, platform="PC",
+                         render_pipeline="URP", scenes=["MainMenu", "Main"],
+                         locomotion=locomotion, entities=list(entities))
+    generator = UnityProjectGenerator("templates/unity")
+    files = generator.generate(schema, {})
+    return generator, files
+
+
+def _file(files: dict[str, str], name: str) -> str:
+    return next(path for path in files if path.endswith(f"/{name}"))
+
+
+def _method_body(text: str, name: str) -> str:
+    start = text.index(f"private void {name}(")
+    header = text[start:text.index("{", start)].rstrip()
+    return _block_after(text, header)[0]
+
+
+def _hero(**kw) -> EntitySpec:
+    return EntitySpec(name="Hero", kind="player", tag="Player", count=1, **kw)
+
+
+def _coin() -> EntitySpec:
+    return EntitySpec(name="Coin", kind="prop", count=3, atoms=_canned("collect"))
+
+
+@pytest.mark.parametrize("game_type", ["2D", "2d_topdown"])
+def test_the_2d_builders_attach_each_groups_behavior(game_type):
+    placer = _PLACERS[game_type]
+    _, files = _spawner(game_type, _hero(), _coin())
+    text = files[_file(files, "EntitySpawner.cs")]
+    call = next(line for line in text.splitlines() if f'{placer}("Coin",' in line)
+    assert '"CoinBehavior"' in call
+    body = _method_body(text, placer)
+    # After the collider: a contact behavior's Start() turns it into a trigger.
+    assert (body.index("go.AddComponent<BoxCollider2D>()")
+            < body.index("go.AddComponent(behaviorType);"))
+
+
+@pytest.mark.parametrize("game_type", ["3D", "2D", "2d_topdown"])
+def test_the_rendered_spawner_compiles_against_real_unity(game_type):
+    from src.unity_component_api import extract_sources
+    from src.unity_component_check import check_candidate
+    from tests.test_reload_provider import _references
+
+    _, files = _spawner(game_type, _hero(), _coin())
+    spawner, behavior = _file(files, "EntitySpawner.cs"), _file(files, "CoinBehavior.cs")
+    check = check_candidate(extract_sources({behavior: files[behavior]}),
+                            {spawner: files[spawner]}, references=_references())
+    assert check.accepted, (game_type, check.errors)
+
+
+@pytest.mark.parametrize("game_type, locomotion", [
+    ("2D", "walk"), ("2d_topdown", "walk"), ("2D", "none"),
+])
+def test_bindings_attach_exactly_the_groups_the_spawner_places(game_type, locomotion):
+    """Drift guard between atom_bindings.spawner_2d_skip_reason and the
+    template's builder loops (and the UI-board branch, which a 2D project
+    with locomotion='none' takes instead)."""
+    import re
+
+    patrol = _canned("patrol")
+    entities = [EntitySpec(name="Coin", kind="prop", count=3, atoms=_canned("collect")),
+                EntitySpec(name="Lane", kind="road", count=1, atoms=patrol),
+                EntitySpec(name="Floor", kind="ground", count=1, atoms=patrol),
+                EntitySpec(name="Palm", kind="tree", count=2, atoms=patrol)]
+    if locomotion != "none":
+        entities.insert(0, _hero(atoms=patrol))
+    generator, files = _spawner(game_type, *entities, locomotion=locomotion)
+    text = files[_file(files, "EntitySpawner.cs")]
+    placed = set(re.findall(
+        r'(?:PlaceRow2D|PlaceGroup2DTopDown|SpawnGroup|SpawnTiledGroup)\("([^"]+)"', text))
+    routes = {route.source[len("entities["):-len("].atoms")]: route
+              for route in generator.last_atom_bindings.routes
+              if route.source.startswith("entities[")}
+    assert {name for name, route in routes.items() if route.attached} == placed & set(routes)
+    for name, route in routes.items():
+        if not route.attached:
+            assert route.finding and "builder does not place" in route.finding, (name, route)
+
+
+def test_a_2d_player_route_is_reported_unattached():
+    generator, _ = _spawner("2D", _hero(atoms=_canned("patrol")), _coin())
+    hero = generator.last_atom_bindings.route("entities[Hero].atoms")
+    assert hero.host is None and hero.scenes == []
+    assert hero.finding == ("the 2D side-scroller builder does not place kind='player' "
+                            "groups, so nothing adds its behavior")
+    coin = generator.last_atom_bindings.route("entities[Coin].atoms")
+    assert coin.host == "EntitySpawner.AddComponent" and coin.trigger == "player_contact"

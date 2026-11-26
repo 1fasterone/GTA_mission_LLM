@@ -127,7 +127,7 @@ that starts it, and persists the record in `schema.meta["atom_bindings"]`
 | Route source | Host class | Host | Phase | Trigger |
 | --- | --- | --- | --- | --- |
 | `atoms` | `GameSequencer` | `_GameSequencer`, every gameplay scene | `start_coroutine_once` | `scene_load` |
-| `entities[<name>].atoms` | `<Name>Behavior` | `EntitySpawner.AddComponent`, scenes hosting the group | `start_coroutine_loop` unless the sequence despawns | `entity_spawn` |
+| `entities[<name>].atoms` | `<Name>Behavior` | `EntitySpawner.AddComponent`, scenes hosting the group | `start_coroutine_loop` unless the sequence despawns | `entity_spawn`, `player_contact` or `death` (below) |
 | `scripts[<name>].atoms` | the custom script | its `attach_to` scene object | `start_coroutine_once` | `scene_load` |
 
 Each atom in a route carries its provider: the Unity lowerer it reaches
@@ -155,6 +155,34 @@ Each atom in a route carries its provider: the Unity lowerer it reaches
 - **Entity behavior.** An entity's atoms render only into `<Name>Behavior`, so
   reconciliation sets `entity.behavior` to that class. A blank or foreign name
   used to leave the class emitted but never added at spawn.
+- **Entity triggers.** `behavior_map.behavior_trigger` reads when a sequence
+  starts from the atoms themselves. No schema field holds it. A sequence equal,
+  atom by atom and arg by arg, to the canned `collect` or `pickup` sequence is
+  `player_contact`: `Start()` makes the entity's own colliders triggers, and
+  `OnTriggerEnter` (`OnTriggerEnter2D` for `2D`/`2d_topdown`) runs it once,
+  latched, when a collider tagged `Player`, or one whose attached rigidbody is,
+  enters. One equal to `die` is `death`: a latched `public void OnDeath()`, and
+  no `Start`. EntitySpawner attaches no health component, so nothing sends
+  `OnDeath` yet. Every death route carries that finding, and its sequence
+  stays dormant instead of playing its death at spawn. Every other sequence is
+  `entity_spawn`, started from `Start()` as before. `expand_behavior` matches
+  whole words from an explicit word-form table, so `soldier`, `diesel` and
+  `purchase` no longer select `die` or `chase`.
+- **2D attachment.** An embodied `2D`/`2d_topdown` project places its groups
+  through `PlaceRow2D`/`PlaceGroup2DTopDown`, which now add the group's
+  behavior class after its `BoxCollider2D`, the same way `SpawnGroup` does.
+  Before this, no 2D group ever got its behavior. Those builders still leave
+  some groups out: the player, side-scroller `road`/`ground`, and `fx:`
+  groups. `atom_bindings.spawner_2d_skip_reason` reports their routes as
+  unattached, with the reason. A UI board (`locomotion='none'`) takes the
+  generic `SpawnGroup` branch in every game type.
+- **`self`.** The entity atoms' `entity` param reserves `self` (any case): the
+  GameObject running the sequence. `Despawn self` lowers to
+  `Destroy(gameObject);`. `SetHealth`/`EquipWeapon` `self` read the host.
+  `GameObject.Find("self")` matched nothing, and a group's own name does not
+  match its spawned instances (`<group>_<i>`), so before this every canned
+  `collect`/`pickup`/`die` despawn was a no-op. The GTA5 `_despawn` still
+  ignores its `entity` arg and deletes the ped nearest the player.
 - **Versioned replay.** Pipeline, `unity-validate` and `unity_eval.replay` all go
   through `generate()`. A saved record that matches is confirmed. One that drifts
   is reported route by route. One this compiler cannot read (another version, an

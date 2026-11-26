@@ -63,15 +63,18 @@ public sealed class ReloadProviderPlayModeTests
     }
 
     /// <summary>Runs the lowered Reload atom through its real host: the
-    /// generated ArmoryBehavior runs entities[Armory].atoms ([Reload, Despawn])
-    /// once from Start, as EntitySpawner's AddComponent would, then despawns.</summary>
+    /// generated ArmoryBehavior runs entities[Armory].atoms ([Reload, Despawn
+    /// self]) once from Start, as EntitySpawner's AddComponent would, then
+    /// despawns that host. The host carries EntitySpawner's instance name
+    /// ("&lt;group&gt;_&lt;i&gt;"), which the group name alone never finds.</summary>
     private IEnumerator RunReloadAtom()
     {
-        var host = new GameObject("Armory");
+        var host = new GameObject("Armory_0");
         _spawned.Add(host);
         host.AddComponent<ArmoryBehavior>();
         yield return null;
         yield return null;
+        Assert.IsTrue(host == null, "ArmoryBehavior did not despawn its own host.");
     }
 
     private static void EmptyMagazine(IFiringProvider provider)

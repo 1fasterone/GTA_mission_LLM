@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from src.llm_budgets import MICRO_FILL
 from src.micro import REGISTRY
 from src.micro.controller     import ControllerPipeline, ControllerSchema, WeaponDef
 from src.micro.camera         import CameraRigPipeline,  CameraRigSchema
@@ -1218,11 +1219,14 @@ class _FlakyLLM:
         self.fail_n = fail_n
         self.good_json = good_json
         self.schema_calls = 0
+        self.schema_max_tokens: list = []
 
-    def chat(self, system, user, temperature, thinking):
+    # Same keyword surface as LMStudioClient.chat: the fill passes max_tokens.
+    def chat(self, system, user, temperature, thinking, max_tokens=None, **_kw):
         if thinking:                      # concept step
             return "a concept brief"
         self.schema_calls += 1            # schema step
+        self.schema_max_tokens.append(max_tokens)
         if self.schema_calls <= self.fail_n:
             raise ValueError("No JSON object in LLM response")
         return self.good_json
@@ -1238,6 +1242,8 @@ def test_schema_fill_retries_then_succeeds(tmp_path, dummy_config):
     out = p.run("a health bar", variant="health_bar", out=str(tmp_path))
     assert (Path(out) / "Scripts" / "Hp.cs").exists()
     assert p.llm.schema_calls == 2        # failed once, succeeded on retry
+    # Every attempt carries the micro fill's measured cap (src/llm_budgets.py).
+    assert p.llm.schema_max_tokens == [MICRO_FILL.tokens, MICRO_FILL.tokens]
 
 
 def test_schema_fill_raises_after_exhausting_attempts(tmp_path, dummy_config):

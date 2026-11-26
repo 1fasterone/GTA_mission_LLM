@@ -213,13 +213,14 @@ def test_micro_code_treats_a_truncated_reply_as_a_failed_attempt():
 # ── audit: no LLM call in src/ silently inherits the schema-fill budget ───────
 
 # Calls that still use the client-wide budget: the GTA5 and standalone-micro
-# Step 2 concept and Step 3 schema fill. Keyed by (file, enclosing function) ->
-# count, so a new uncapped call inside one of these functions still fails the
-# audit. The Unity pipeline has no entry: its concept (CONCEPT_TOKENS) and its
-# fill (SCHEMA_FILL_TOKENS) both pass max_tokens.
+# Step 2 concepts, prose replies that never reach extract_json. Every Step 3
+# schema fill passes its FillBudget cap, and the Unity Step 2 concept passes
+# CONCEPT_TOKENS, so the Unity pipeline has no entry. Keyed by (file,
+# enclosing function) -> count, so a new uncapped call inside one of these
+# functions still fails the audit.
 _UNCAPPED_ALLOWED = {
-    ("src/pipeline.py", "_run_impl"): 2,         # GTA5 concept + schema fill
-    ("src/micro_pipeline.py", "run"): 2,         # standalone micro concept + schema fill
+    ("src/pipeline.py", "_run_impl"): 1,         # GTA5 Step 2 concept
+    ("src/micro_pipeline.py", "run"): 1,         # standalone micro Step 2 concept
 }
 
 
