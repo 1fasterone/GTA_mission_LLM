@@ -30,7 +30,10 @@ import pytest
 
 from src.llm_budgets import (
     GTA5_CONCEPT,
+    GTA5_FILL,
     MICRO_CONCEPT,
+    MICRO_FILL,
+    UNITY_FILL,
     ConceptBudget,
     ReplyTruncatedError,
 )
@@ -409,3 +412,34 @@ def test_the_concept_remedy_depends_on_where_the_cap_came_from(budget: ConceptBu
     assert "1,234 chars" in str(small)
     assert f"Raise lm_studio.max_tokens to {budget.tokens:,}" in str(small)
     assert "runaway" not in str(small)
+
+
+def test_a_concept_capped_by_the_ollama_block_names_that_block_in_its_remedy(tmp_path):
+    # active_chat_cfg (src/backends.py) takes max_tokens from the selected
+    # backend's own block. Here lm_studio.max_tokens is far above the budget and
+    # ollama.max_tokens is below it: the cap is Ollama's, so the remedy must
+    # name ollama.max_tokens, or raising lm_studio.max_tokens changes nothing.
+    micro = _ProbeMicro({
+        "lm_studio": {"backend": "ollama", "max_tokens": _GLOBAL_MAX_TOKENS},
+        "ollama": {"base_url": "http://localhost:11434/v1", "model": "test",
+                   "max_tokens": 2000},
+    })
+    server = _wire_micro(micro, (ValueError(_SPENT), "length"))
+
+    with pytest.raises(ReplyTruncatedError) as excinfo:
+        _run_micro(micro, tmp_path)
+
+    assert server.concept_max_tokens == [2000]
+    message = str(excinfo.value)
+    assert "2,000-token cap" in message
+    assert "raise ollama.max_tokens or openrouter.max_tokens instead" in message
+
+
+@pytest.mark.parametrize("budget", [GTA5_CONCEPT, MICRO_CONCEPT, GTA5_FILL, MICRO_FILL, UNITY_FILL],
+                         ids=lambda b: b.purpose)
+def test_every_config_cap_remedy_names_the_backend_override(budget):
+    message = str(budget.truncated(budget.tokens // 4, 0))
+    assert f"Raise lm_studio.max_tokens to {budget.tokens:,}" in message
+    assert "ollama.max_tokens" in message and "openrouter.max_tokens" in message
+    # The runaway remedy says not to raise anything, so it names no key.
+    assert "max_tokens" not in str(budget.truncated(budget.tokens, 0))

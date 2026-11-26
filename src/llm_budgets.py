@@ -113,6 +113,22 @@ def _positive_int(value: Any) -> Optional[int]:
     return value
 
 
+def _raise_configured_cap(tokens: int) -> str:
+    """How to raise the configured cap to `tokens`, whichever backend is active.
+
+    The client's max_tokens comes from `active_chat_cfg` (src/backends.py):
+    the selected backend's own block when `lm_studio.backend` is ollama or
+    openrouter and that block sets `max_tokens`, `lm_studio.max_tokens`
+    otherwise. Naming only `lm_studio.max_tokens` would send an Ollama or
+    OpenRouter user to a key that the override keeps ignoring.
+    """
+    return (
+        f"Raise lm_studio.max_tokens to {tokens:,}. When lm_studio.backend is "
+        f"ollama or openrouter and that block sets its own max_tokens, that "
+        f"value wins: raise ollama.max_tokens or openrouter.max_tokens instead."
+    )
+
+
 @dataclass(frozen=True)
 class _CallBudget:
     """One Pipeline LLM call's completion cap, sized from its healthy replies.
@@ -130,8 +146,9 @@ class _CallBudget:
         """The call's `max_tokens`: the smallest cap that applies.
 
         `tokens` always applies, and so does each value in `extra` (the visual
-        compile's own fill cap). `configured` is the client-wide
-        `lm_studio.max_tokens`, so a config that asks for less keeps it. A
+        compile's own fill cap). `configured` is the client-wide max_tokens
+        (`lm_studio.max_tokens`, or the selected backend's own, see
+        `_raise_configured_cap`), so a config that asks for less keeps it. A
         measured budget lowers the client default and never raises it. A
         `configured` value that is not a positive int (absent, or a test
         double's attribute) adds no cap.
@@ -165,11 +182,11 @@ class FillBudget(_CallBudget):
         """
         if max_tokens < self.tokens:
             remedy = (
-                f"The cap came from lm_studio.max_tokens, which is below the "
-                f"measured budget of {self.tokens:,} for this fill (healthy "
-                f"fills measure up to {self.healthy_max:,} tokens). Raise "
-                f"lm_studio.max_tokens to {self.tokens:,}. The fill never uses "
-                f"more than that."
+                f"The cap came from the configured max_tokens, which is below "
+                f"the measured budget of {self.tokens:,} for this fill (healthy "
+                f"fills measure up to {self.healthy_max:,} tokens). "
+                f"{_raise_configured_cap(self.tokens)} The fill never uses more "
+                f"than that."
             )
         else:
             remedy = (
@@ -208,10 +225,10 @@ class ConceptBudget(_CallBudget):
         """
         if max_tokens < self.tokens:
             remedy = (
-                f"The cap came from lm_studio.max_tokens, which is below the "
-                f"measured budget of {self.tokens:,} for this concept (healthy "
-                f"concepts measure up to {self.healthy_max:,} tokens, reasoning "
-                f"included). Raise lm_studio.max_tokens to {self.tokens:,}. The "
+                f"The cap came from the configured max_tokens, which is below "
+                f"the measured budget of {self.tokens:,} for this concept "
+                f"(healthy concepts measure up to {self.healthy_max:,} tokens, "
+                f"reasoning included). {_raise_configured_cap(self.tokens)} The "
                 f"concept never uses more than that."
             )
         else:
