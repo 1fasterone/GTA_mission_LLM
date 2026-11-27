@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from .unity_brief_sections import (_DASH_SPLIT_RE, _NUMBERED_RE, _fold_numbered,
                                    _section, _to_pascal)
-from .unity_schema import SceneSpec
+from .unity_schema import SCENE_CAP, SceneSpec
 
 # Deterministic time-of-day read from the scene's own words. Not a guess: the
 # brief either says one of these or the scene keeps the "day" default, and the
@@ -94,11 +94,11 @@ def extract_named_scenes(user_prompt: str) -> list[SceneSpec]:
     return specs
 
 
-# UnitySchema.scene_specs caps at max_length=8, and unity_pipeline._programmatic_fix
-# independently hard-truncates schema.scenes to [:8] before this rescue ever runs
-# (Step 5 fixer runs first) — the rescue must respect the same budget itself or its
-# own append would be silently chopped downstream with no log line explaining why.
-_MAX_SCENES = 8
+# UnitySchema.scene_specs caps at SCENE_CAP, and unity_pipeline._programmatic_fix
+# caps schema.scenes at the same SCENE_CAP before this rescue ever runs (Step 5
+# fixer runs first) — the rescue must respect the same budget itself or its own
+# append would overflow the schema's cap with no log line explaining why.
+_MAX_SCENES = SCENE_CAP
 _CHECKLIST_MAX_DESC = 200  # SceneSpec.description itself clamps to 200 chars
 
 

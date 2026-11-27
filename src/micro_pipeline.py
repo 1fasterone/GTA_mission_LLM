@@ -38,6 +38,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .backends import make_chat_client
+from .llm_budgets import MICRO_FILL, ReplyTruncatedError, reply_truncated
 from .themes import (
     resolve_theme,
     render_concept_bias,
@@ -269,6 +270,10 @@ class MicroPipeline(ABC):
         # before giving up — a cheap, model-agnostic robustness win.
         schema = None
         last_err: Exception | None = None
+        # A measured ceiling for this one call (src/llm_budgets.py), instead of
+        # the client-wide lm_studio.max_tokens. A config that asks for less
+        # keeps its own value.
+        fill_max_tokens = MICRO_FILL.cap(configured=getattr(self.llm, "max_tokens", None))
         for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
             user_msg = schema_user
             if attempt > 0:
@@ -284,7 +289,14 @@ class MicroPipeline(ABC):
                     user        = user_msg,
                     temperature = self.schema_temp if attempt == 0 else min(self.schema_temp, 0.1),
                     thinking    = False,
+                    max_tokens  = fill_max_tokens,
                 )
+                # A reply the server cut off at the cap is a failed attempt,
+                # never a schema. extract_json would bracket-close it (live,
+                # 2026-07-08: a cut-off NPC-dialog fill validates with only the
+                # lines written before the cut).
+                if reply_truncated(self.llm):
+                    raise MICRO_FILL.truncated(fill_max_tokens, len(schema_raw or ""))
                 schema_dict = self.llm.extract_json(schema_raw)
                 # The LLM occasionally omits or fights the variant — force it.
                 schema_dict.setdefault("variant", variant)
@@ -292,7 +304,12 @@ class MicroPipeline(ABC):
                 break
             except (ValueError, ValidationError) as e:
                 last_err = e
-                if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
+                retrying = attempt + 1 < self.SCHEMA_FILL_ATTEMPTS
+                if isinstance(e, ReplyTruncatedError):
+                    # Loud on every attempt, the last one included.
+                    self._warn(f"schema fill attempt {attempt + 1}: {e}"
+                               + (" Retrying colder." if retrying else ""))
+                elif retrying:
                     self._warn(f"schema fill attempt {attempt + 1} failed ({type(e).__name__}); retrying")
         if schema is None:
             raise RuntimeError(

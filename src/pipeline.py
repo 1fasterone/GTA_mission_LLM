@@ -19,6 +19,7 @@ from .backends           import make_chat_client, make_rag_client
 from .resolver           import (ModelResolver, _load_lookups,
                                 pick_model_deterministic)
 from .llm_boundary       import freeze, thaw
+from .llm_budgets        import GTA5_FILL, ReplyTruncatedError, reply_truncated
 from .mission_schema     import MissionSchema, MissionObject
 from .code_generator     import CodeGenerator
 from .prompts            import (
@@ -532,6 +533,10 @@ class MissionPipeline:
         from pydantic import ValidationError as _ValidationError
         schema = None
         last_err: Exception | None = None
+        # A measured ceiling for this one call (src/llm_budgets.py), instead of
+        # the client-wide lm_studio.max_tokens. A config that asks for less
+        # keeps its own value.
+        fill_max_tokens = GTA5_FILL.cap(configured=getattr(self.llm, "max_tokens", None))
         for attempt in range(2):
             user_msg = schema_user
             if attempt > 0:
@@ -547,13 +552,24 @@ class MissionPipeline:
                     user        = user_msg,
                     temperature = self.schema_temp if attempt == 0 else min(self.schema_temp, 0.1),
                     thinking    = False,
+                    max_tokens  = fill_max_tokens,
                 )
+                # A reply the server cut off at the cap is a failed attempt,
+                # never a mission. extract_json would bracket-close it (live,
+                # 2026-07-12: a cut-off fill validates with its vehicles list
+                # cut mid-entry and no objects at all).
+                if reply_truncated(self.llm):
+                    raise GTA5_FILL.truncated(fill_max_tokens, len(schema_raw or ""))
                 schema_dict = self.llm.extract_json(schema_raw)
                 schema = MissionSchema.model_validate(schema_dict)
                 break
             except (ValueError, _ValidationError) as e:
                 last_err = e
-                if attempt == 0:
+                if isinstance(e, ReplyTruncatedError):
+                    # Loud on every attempt, the last one included.
+                    self._warn(f"schema fill attempt {attempt + 1}: {e}"
+                               + (" Retrying colder." if attempt == 0 else ""))
+                elif attempt == 0:
                     self._warn(f"schema fill attempt 1 failed ({type(e).__name__}); retrying")
         if schema is None:
             raise RuntimeError(f"schema fill failed after 2 attempts: {last_err}") from last_err
