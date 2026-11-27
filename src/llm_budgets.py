@@ -80,6 +80,19 @@ MICRO_CODE_TOKENS = 6000
 # `extract_dialog_lines(count=0)` asks for the system prompt's default 3-6 lines.
 DIALOG_DEFAULT_LINES = 6
 
+# Step 2 Unity concept (src/unity_pipeline.py), the one prose call and the one
+# that reasons. Until this cap it passed no `max_tokens`, so it inherited the
+# client-wide lm_studio.max_tokens (88,000 in the E2E config): a reasoning loop
+# there stops only at the context wall. Measured: every Unity concept reply in
+# the LM Studio server logs of 2026-10-04 .. 2026-11-19 (qwen3.5-9b, n=64, all
+# finish_reason=stop): median 3,300 / max 8,302 completion tokens, reasoning
+# included (reasoning is most of each reply). The largest prompt was 2,348
+# tokens. 12,000 is 1.45x that max and 3.6x the median; at about 25 tok/s a
+# runaway ends after roughly 8 minutes instead of running to the wall.
+CONCEPT_HEALTHY_MAX_TOKENS = 8_302
+CONCEPT_TOKENS = 12_000
+
+
 class ReplyTruncatedError(ValueError):
     """The server cut a reply off at its cap (`finish_reason == "length"`).
 
@@ -212,6 +225,45 @@ def schema_fill_tokens(*, visual_compile: bool, configured: Any = None) -> int:
 def schema_fill_truncated(max_tokens: int, chars: int) -> ReplyTruncatedError:
     """The error for a Unity Step 3 fill reply cut off at `max_tokens`."""
     return UNITY_FILL.truncated(max_tokens, chars)
+
+
+def concept_tokens(*, configured: Any = None) -> int:
+    """The Step 2 concept's `max_tokens`: `CONCEPT_TOKENS`, or less if the config asks.
+
+    Same rule as `schema_fill_tokens`: a measured budget lowers the
+    client-wide `lm_studio.max_tokens` and never raises it, and a `configured`
+    value that is not a positive int adds no cap.
+    """
+    caps = [CONCEPT_TOKENS]
+    client_cap = _positive_int(configured)
+    if client_cap is not None:
+        caps.append(client_cap)
+    return min(caps)
+
+
+def concept_truncated(max_tokens: int, chars: int) -> ReplyTruncatedError:
+    """The error for a Step 2 concept reply cut off at `max_tokens`.
+
+    A cut-off concept is never handed to Step 3: a brief that stops
+    mid-sentence, or one that is empty because the cap landed inside the
+    reasoning, would be filled as if it were whole. As with the schema fill,
+    the remedy depends on where the cap came from.
+    """
+    if max_tokens < CONCEPT_TOKENS:
+        remedy = (
+            f"The cap came from lm_studio.max_tokens, which is below the "
+            f"measured Step 2 budget of {CONCEPT_TOKENS:,} (healthy concepts "
+            f"measure up to {CONCEPT_HEALTHY_MAX_TOKENS:,} tokens, reasoning "
+            f"included). Raise lm_studio.max_tokens to {CONCEPT_TOKENS:,}."
+        )
+    else:
+        remedy = (
+            f"Healthy concepts measure at most {CONCEPT_HEALTHY_MAX_TOKENS:,} "
+            f"tokens, reasoning included, so this is likely a runaway "
+            f"(usually reasoning that loops). Raising the cap only lengthens "
+            f"the loop. Re-run, or pass --no-think to skip Step 2 reasoning."
+        )
+    return ReplyTruncatedError("Step 2 concept", max_tokens, chars, remedy)
 
 
 def reply_truncated(llm: Any) -> bool:

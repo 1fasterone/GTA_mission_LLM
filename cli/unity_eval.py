@@ -1415,3 +1415,235 @@ def unity_eval(
                   f"above their floor")
     if failed:
         raise typer.Exit(1)
+
+
+# ── unity-batch: resumable batches of live runs (src/unity_batch.py) ───────────
+
+@app.command(
+    "unity-batch",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def unity_batch(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        ..., help="Batch name (a folder under <unity_output_dir>/_batches) or a batch folder path"),
+    file: Optional[Path] = typer.Option(
+        None, "--file", "-f",
+        help="The brief. Required to create a batch; on resume it must be the same content"),
+    runs: Optional[int] = typer.Option(
+        None, "--runs", "-n",
+        help="Target number of finished runs (a new batch defaults to 10; on resume, sets it)"),
+    add: Optional[int] = typer.Option(None, "--add", help="Raise the target by this many runs"),
+    max_runs: Optional[int] = typer.Option(
+        None, "--max", help="Run at most this many now, then stop (0: only apply --runs/--add)"),
+    hours: Optional[float] = typer.Option(
+        None, "--hours", help="Start no new run after this many hours"),
+    config: Optional[str] = typer.Option(
+        None, "--config", "-c",
+        help="Pipeline config (a new batch defaults to config.yaml; on resume, the batch's own)"),
+    verify: Optional[bool] = typer.Option(
+        None, "--verify/--no-verify",
+        help="After each run, e2e-verify --playtest: the real Unity compile + Play mode "
+             "(a new batch defaults to on)"),
+    stall_minutes: float = typer.Option(
+        60.0, "--stall-minutes", help="Kill a run that prints nothing for this long (0: never)"),
+    min_free_gb: float = typer.Option(
+        10.0, "--min-free-gb", help="Start no run with less free disk than this on the batch drive"),
+    follow: bool = typer.Option(False, "--follow", help="Echo every line of each run, not just milestones"),
+    stop: bool = typer.Option(
+        False, "--stop", help="Ask the running driver to stop after its current run, then exit"),
+    discard: Optional[int] = typer.Option(
+        None, "--discard", help="Discard finished run N (needs --reason); its slot runs again"),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Why the --discard"),
+) -> None:
+    """Run a brief N times through the live pipeline, a few runs at a time.
+
+    Each run is one full `unity-create` (Pipeline LLM included) in its own
+    folder, then `e2e-verify --playtest`. Stop whenever you need the machine
+    (Ctrl-C, --stop from another terminal, --max, --hours); run the same
+    command later and it continues with the next run. Unknown options are
+    forwarded to every run's unity-create (e.g. --no-micro-code), fixed for
+    the whole batch. docs/UNITY_BATCH.md is the reference.
+
+    \b
+      python main.py unity-batch neon --file prompts/neon_fugitive.txt --runs 20
+      python main.py unity-batch neon                  # continue where it stopped
+      python main.py unity-batch neon --max 2          # just two runs now
+      python main.py unity-batch neon --hours 7        # overnight: no new run after 7 h
+      python main.py unity-batch neon --add 10         # ten more on top of the target
+      python main.py unity-batch neon --stop           # (other terminal) stop after this run
+      python main.py unity-batch neon --discard 3 --reason "LM Studio stopped by hand"
+      python main.py unity-batch-status neon           # examine the results
+    """
+    from rich.markup import escape
+
+    from src.unity_batch import (DEFAULT_TARGET, REPO_ROOT, Batch, BatchDriver,
+                                 BatchError, BatchInterrupted, DriveOptions,
+                                 batches_root, resolve_batch_dir)
+
+    extra = list(ctx.args)
+    config_path = Path(config or "config.yaml")
+
+    def echo(line: str) -> None:
+        console.print(line, markup=False, highlight=False)
+
+    try:
+        folder = resolve_batch_dir(name, batches_root(config_path))
+        created = False
+        if Batch.exists(folder):
+            batch = Batch.load(folder)
+            batch.check_brief(file)
+            batch.check_config(Path(config) if config else None)
+            batch.check_args(extra)
+            batch.check_verify(verify)
+        else:
+            if stop or discard is not None:
+                raise BatchError(f"no batch at {folder}")
+            if file is None:
+                raise BatchError(
+                    f"no batch at {folder}. Create it with --file <brief> (and --runs N). "
+                    "A batch made with another --config lives under that config's "
+                    "unity_output_dir: pass the same --config, or the batch folder path.")
+            if add is not None:
+                raise BatchError("--add raises the target of an existing batch; "
+                                 "a new batch takes --runs")
+            # Default only when --runs is absent: an explicit 0 must reach
+            # Batch.create's validation, never become a ten-run batch.
+            batch = Batch.create(folder, brief=file, config=config_path, create_args=extra,
+                                 verify=True if verify is None else verify,
+                                 target=DEFAULT_TARGET if runs is None else runs)
+            created = True
+            echo(f"Batch created: {folder}")
+
+        if stop:
+            pid = batch.request_stop()
+            if pid is None:
+                echo(f"No driver is running batch {batch.name}; nothing to stop.")
+            else:
+                echo(f"Driver pid {pid} stops after its current run.")
+            return
+        if discard is not None:
+            entry = batch.discard(discard, reason)
+            echo(f"Run {discard:02d} discarded ({entry['reason']}); its folder "
+                 f"{entry.get('folder')} is kept and the slot runs again.")
+            return
+        if not created:
+            batch.set_target(runs=runs, add=add)
+        if max_runs == 0:
+            echo(f"{len(batch.finished())}/{batch.target} run(s) finished; nothing run (--max 0).")
+            return
+
+        result = BatchDriver(batch, repo_root=REPO_ROOT, echo=echo).drive(DriveOptions(
+            max_runs=max_runs, hours=hours, stall_minutes=stall_minutes,
+            min_free_gb=min_free_gb, follow=follow))
+    except (BatchInterrupted, KeyboardInterrupt):
+        console.print(f"\n[yellow]Interrupted.[/] The cut-off attempt is recorded and its slot "
+                      f"runs again. Continue with:  python main.py unity-batch {escape(name)}")
+        raise typer.Exit(130)
+    except BatchError as exc:
+        console.print(f"[red]unity-batch:[/] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+
+    echo(f"Results:  python main.py unity-batch-status {name}")
+    if batch.next_slot() is not None:
+        echo(f"Continue: python main.py unity-batch {name}")
+    if result.exit_code:
+        raise typer.Exit(result.exit_code)
+
+
+@app.command("unity-batch-status")
+def unity_batch_status(
+    name: Optional[str] = typer.Argument(
+        None, help="Batch name or folder; omit to list every batch"),
+    config: str = typer.Option("config.yaml", "--config", "-c",
+                               help="Config whose unity_output_dir holds the batches"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+) -> None:
+    """Examine a unity-batch: one row per finished run, plus what is running now.
+
+    \b
+      python main.py unity-batch-status            # every batch
+      python main.py unity-batch-status neon       # one batch, run by run
+      python main.py unity-batch-status neon --json
+    """
+    from rich.markup import escape
+    from rich.table import Table
+
+    from src.unity_batch import (Batch, BatchError, batches_root, list_batches,
+                                 resolve_batch_dir, status_rows, summarize)
+
+    def cell(value: object) -> str:
+        return "-" if value is None or value == "" else escape(str(value))
+
+    try:
+        root = batches_root(Path(config))
+        if name is None:
+            folders = list_batches(root)
+            summaries = [summarize(Batch.load(f)) for f in folders]
+            if as_json:
+                console.print_json(json.dumps(summaries))
+                return
+            if not folders:
+                console.print(f"No batches under {escape(str(root))}")
+                return
+            listing = Table(title=f"Batches in {escape(str(root))}")
+            for column in ("batch", "finished", "verdicts", "discarded", "driver"):
+                listing.add_column(column)
+            for s in summaries:
+                verdicts = ", ".join(f"{k} {v}" for k, v in sorted(s["verdicts"].items()))
+                listing.add_row(cell(s["name"]), f"{s['finished']}/{s['target']}", cell(verdicts),
+                                str(s["discarded"]),
+                                f"running (pid {s['driver_pid']})" if s["driver_pid"] else "idle")
+            console.print(listing)
+            return
+
+        batch = Batch.load(resolve_batch_dir(name, root))
+    except BatchError as exc:
+        console.print(f"[red]unity-batch-status:[/] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
+
+    summary = summarize(batch)
+    rows = status_rows(batch)
+    if as_json:
+        console.print_json(json.dumps({"summary": summary, "runs": rows,
+                                       "discarded": batch.discarded}, default=str))
+        return
+
+    brief = batch.data["brief"]
+    console.print(f"[bold]{escape(batch.name)}[/]  {escape(str(batch.path))}")
+    console.print(f"  brief   {escape(brief['source_path'])} (sha256 {brief['sha256'][:12]}; "
+                  f"every run reads the snapshot {escape(str(batch.brief_path))})")
+    config_note = ""
+    if len(summary["config_sha256s"]) > 1:
+        config_note = f"  [yellow]changed between runs: {', '.join(summary['config_sha256s'])}[/]"
+    console.print(f"  config  {escape(str(batch.config_path))}{config_note}")
+    console.print(f"  flags   {escape(' '.join(batch.create_args) or '(none)')}   "
+                  f"verify {'on' if batch.verify else 'off'}")
+    if len(summary["commits"]) > 1:
+        console.print(f"  [yellow]code changed between runs: {', '.join(summary['commits'])}[/]")
+    driver = f"running (pid {summary['driver_pid']})" if summary["driver_pid"] else "idle"
+    console.print(f"  driver  {driver}")
+
+    table = Table()
+    for column in ("run", "verdict", "min", "reached / failed at", "play", "compile",
+                   "playtest", "failure", "folder"):
+        table.add_column(column, overflow="fold")
+    for row in rows:
+        run = f"{row['n']:02d}" + (f" (a{row['attempt']})" if (row["attempt"] or 1) > 1 else "")
+        table.add_row(run, cell(row["verdict"]), cell(row["minutes"]), cell(row["reached"]),
+                      cell(row["playability"]), cell(row["compile"]), cell(row["playtest"]),
+                      cell(row["failure"]), cell(row["folder"]))
+    console.print(table)
+
+    if batch.discarded:
+        console.print("[dim]Discarded attempts (not samples):[/]")
+        for d in batch.discarded:
+            console.print(f"  [dim]{int(d['n']):02d} a{d.get('attempt')} {escape(str(d.get('status')))}: "
+                          f"{escape(str(d.get('reason')))} -> {escape(str(d.get('folder')))}[/]")
+    verdicts = ", ".join(f"{k} {v}" for k, v in sorted(summary["verdicts"].items())) or "none yet"
+    console.print(f"\n{summary['finished']}/{summary['target']} finished: {verdicts}.  "
+                  f"Median {cell(summary['median_minutes'])} min, playability "
+                  f"{cell(summary['median_playability'])}.")
+    if summary["failure_categories"]:
+        console.print("Failures: " + ", ".join(
+            f"{escape(k)} {v}" for k, v in sorted(summary["failure_categories"].items())))
