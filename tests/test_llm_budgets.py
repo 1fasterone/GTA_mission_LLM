@@ -212,14 +212,14 @@ def test_micro_code_treats_a_truncated_reply_as_a_failed_attempt():
 
 # ── audit: no LLM call in src/ silently inherits the schema-fill budget ───────
 
-# Calls that legitimately use the client-wide budget: the Step 2 concept of each
-# pipeline, a prose reply that never reaches extract_json. Every Step 3 schema
-# fill passes its FillBudget cap. Keyed by (file, enclosing function) -> count,
-# so a new uncapped call inside one of these functions still fails the audit.
+# Calls that still use the client-wide budget. Only the Unity Step 2 concept is
+# left. Every Step 3 schema fill passes its FillBudget cap, and the GTA5 and
+# micro Step 2 concepts pass their ConceptBudget caps. Keyed by (file, enclosing
+# function) -> count, so a new uncapped call inside this function still fails
+# the audit. When the Unity concept is capped this dict is empty, and
+# test_the_audit_flags_an_uncapped_call keeps the audit from passing vacuously.
 _UNCAPPED_ALLOWED = {
     ("src/unity_pipeline.py", "_run_impl"): 1,   # Unity Step 2 concept
-    ("src/pipeline.py", "_run_impl"): 1,         # GTA5 Step 2 concept
-    ("src/micro_pipeline.py", "run"): 1,         # standalone micro Step 2 concept
 }
 
 
@@ -268,3 +268,18 @@ def test_no_llm_call_inherits_the_schema_fill_budget_unless_allowlisted():
 def test_the_audit_sees_the_known_uncapped_calls():
     # Guards the audit itself: if it stopped finding calls, the test above would pass vacuously.
     assert _uncapped_chat_calls() == _UNCAPPED_ALLOWED
+
+
+def test_the_audit_flags_an_uncapped_call():
+    # Guards the audit when _UNCAPPED_ALLOWED is small or empty: the finder must
+    # still see an uncapped .chat() by its enclosing function, and must not
+    # count a capped one.
+    source = (
+        "def concept(llm):\n"
+        "    return llm.chat(system='s', user='u', thinking=True)\n"
+        "def fill(llm, cap):\n"
+        "    return llm.chat(system='s', user='u', max_tokens=cap)\n"
+    )
+    finder = _ChatCallFinder("src/example.py")
+    finder.visit(ast.parse(source))
+    assert finder.found == {("src/example.py", "concept"): 1}

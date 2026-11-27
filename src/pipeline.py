@@ -19,7 +19,8 @@ from .backends           import make_chat_client, make_rag_client
 from .resolver           import (ModelResolver, _load_lookups,
                                 pick_model_deterministic)
 from .llm_boundary       import freeze, thaw
-from .llm_budgets        import GTA5_FILL, ReplyTruncatedError, reply_truncated
+from .llm_budgets        import (GTA5_CONCEPT, GTA5_FILL, ReplyTruncatedError,
+                                 reply_truncated)
 from .mission_schema     import MissionSchema, MissionObject
 from .code_generator     import CodeGenerator
 from .prompts            import (
@@ -508,15 +509,31 @@ class MissionPipeline:
 
         # STEP 2 — mission concept ────────────────────────────────────────────
         self._step(2, "LLM generates mission concept")
-        concept = self.llm.chat(
-            system      = CONCEPT_SYSTEM,
-            user        = CONCEPT_USER.format(
-                user_prompt=user_prompt, theme_block=theme_block,
-                archetype_block=archetype_block,
-            ),
-            temperature = self.concept_temp,
-            thinking    = True,
-        )
+        # A measured ceiling (src/llm_budgets.py) instead of the client-wide
+        # lm_studio.max_tokens, under which a reasoning loop stopped only at
+        # the context wall. A config that asks for less keeps its own value. A
+        # reply cut off at the cap is refused, never handed to Step 3 as a
+        # whole concept. A cap that lands inside the reasoning makes chat()
+        # raise on the empty answer, and that is refused the same way, with
+        # the remedy for where the cap came from.
+        concept_max_tokens = GTA5_CONCEPT.cap(configured=getattr(self.llm, "max_tokens", None))
+        try:
+            concept = self.llm.chat(
+                system      = CONCEPT_SYSTEM,
+                user        = CONCEPT_USER.format(
+                    user_prompt=user_prompt, theme_block=theme_block,
+                    archetype_block=archetype_block,
+                ),
+                temperature = self.concept_temp,
+                thinking    = True,
+                max_tokens  = concept_max_tokens,
+            )
+        except ValueError as exc:
+            if reply_truncated(self.llm):
+                raise GTA5_CONCEPT.truncated(concept_max_tokens, 0) from exc
+            raise
+        if reply_truncated(self.llm):
+            raise GTA5_CONCEPT.truncated(concept_max_tokens, len(concept or ""))
         self._ok(f"{len(concept)} chars of story generated")
         if self.show_prompts:
             console.print(concept)

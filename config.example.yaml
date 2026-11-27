@@ -4,10 +4,10 @@ lm_studio:
   model: qwen3.5-9b               # the model name shown in LM Studio
   temperature: 0.7
   # Default completion cap for any call that sets none of its own. Each Step 3
-  # schema fill (Unity, GTA5 mission, micro) uses the smaller of this value and
-  # its measured cap in src/llm_budgets.py, so this value can lower that cap
-  # but never raise it. The Step 3.5 calls always use their own caps from that
-  # module.
+  # schema fill (Unity, GTA5 mission, micro) and the GTA5 and micro Step 2
+  # concepts use the smaller of this value and their measured cap in
+  # src/llm_budgets.py, so this value can lower that cap but never raise it.
+  # The Step 3.5 calls always use their own caps from that module.
   max_tokens: 8192
   timeout: 600
   concept_temperature: 0.85

@@ -38,7 +38,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .backends import make_chat_client
-from .llm_budgets import MICRO_FILL, ReplyTruncatedError, reply_truncated
+from .llm_budgets import MICRO_CONCEPT, MICRO_FILL, ReplyTruncatedError, reply_truncated
 from .themes import (
     resolve_theme,
     render_concept_bias,
@@ -245,16 +245,32 @@ class MicroPipeline(ABC):
 
         # STEP 2 — concept
         self._step(2, f"LLM describes the {self.kind}")
-        concept = self.llm.chat(
-            system      = self.concept_system,
-            user        = self.concept_prompt.format(
-                user_prompt=user_prompt,
-                theme_block=theme_block,
-                variant=variant,
-            ),
-            temperature = self.concept_temp,
-            thinking    = True,
-        )
+        # A measured ceiling (src/llm_budgets.py) instead of the client-wide
+        # lm_studio.max_tokens, under which a reasoning loop stopped only at
+        # the context wall. A config that asks for less keeps its own value. A
+        # reply cut off at the cap is refused, never handed to Step 3 as a
+        # whole brief. A cap that lands inside the reasoning makes chat() raise
+        # on the empty answer, and that is refused the same way, with the
+        # remedy for where the cap came from.
+        concept_max_tokens = MICRO_CONCEPT.cap(configured=getattr(self.llm, "max_tokens", None))
+        try:
+            concept = self.llm.chat(
+                system      = self.concept_system,
+                user        = self.concept_prompt.format(
+                    user_prompt=user_prompt,
+                    theme_block=theme_block,
+                    variant=variant,
+                ),
+                temperature = self.concept_temp,
+                thinking    = True,
+                max_tokens  = concept_max_tokens,
+            )
+        except ValueError as exc:
+            if reply_truncated(self.llm):
+                raise MICRO_CONCEPT.truncated(concept_max_tokens, 0) from exc
+            raise
+        if reply_truncated(self.llm):
+            raise MICRO_CONCEPT.truncated(concept_max_tokens, len(concept or ""))
         self._ok(f"{len(concept)} chars of brief generated")
 
         # STEP 3 — schema
