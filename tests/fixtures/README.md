@@ -26,8 +26,17 @@ Checked-in inputs and locked baselines for the layout tests.
 
 Regenerating `arenaplane_baseline.json` defeats its purpose — it is a recording
 of `origin/main`, i.e. the layout WITHOUT the archetype work, not a snapshot of
-current behaviour. Re-record it only when main itself legitimately moves (it was
-re-recorded once, when #108 added `EntitySpec.elevation`), and say so in the PR.
+current behaviour. Re-record it only when main itself legitimately moves, and say
+so in the PR. It has been re-recorded twice. The first was when #108 added
+`EntitySpec.elevation`. The second was when packing began to reserve instance
+BODIES, not just centres: chord-spaced rings, plus `_packing_radius` and
+`_preplaced_circle` in `src/unity_layout.py`. That second re-record moved only
+packed groups: planar `Containers`, `Drones`, `ScrapPiles`, `Floodlights`, and
+racing `Crates`, `RivalDrones`, plus their regions and terrain bounds. The
+racetrack scaffold, its path groups and its preplaced karts are unchanged. The
+old recording had no body overlap. It moves because every packed circle now
+reserves a body, so the radii, the biggest-first order and the spiral step all
+change.
 
 It stores a file LIST rather than a byte hash, and is compared with floats
 rounded to 1e-6: generated `.unity` text embeds float64 positions, and

@@ -94,8 +94,17 @@ from .unity_primitive_provider import PrimitiveProvider
 _log = logging.getLogger(__name__)
 
 # Minimum world-space gap enforced between two packed groups' footprint
-# circles, on top of their own radii.
+# circles, on top of their own radii. Packing circles enclose instance BODIES
+# (see _packing_radius), so this is a real gap between models, not between
+# their centres.
 _GROUP_MARGIN = 2.0
+# The smallest XZ half-extent any one instance body is given, measured or not,
+# and so the smallest gap two instances of one group may sit apart. The final
+# spatial preflight (src/unity_spatial_validation.py) judges the baked layout
+# with `instance_body_radius` / `instance_min_spacing` below, so the layout
+# reserves space with exactly the same two formulas. Two formulas that only
+# agreed by coincidence are how a layout came to fail its own validator.
+_MIN_INSTANCE_EXTENT = 0.5
 # Clearance multiplier applied to a MEASURED model footprint (see
 # _effective_spacing), on top of which the scatter jitter is clamped to the
 # leftover slack so the cell spacing is actually honoured. 1.25 was enough to
@@ -224,13 +233,49 @@ _UI_MIN_CELL = 1.2
 _UI_BACKDROP_MARGIN = 2.0
 
 
+def instance_body_radius(scale: float,
+                         measured_footprint_m: Optional[float]) -> float:
+    """Conservative XZ half-extent of ONE realized instance.
+
+    A measured catalog footprint is a ground-plane diameter in metres at
+    scale 1, so its half is the body's radius. Without one, `0.6 * scale`
+    approximates a scaled Unity primitive (~1 unit across before scaling).
+    The layout reserves this around every instance it packs. The final
+    spatial preflight's `group_footprints` check compares two groups'
+    instances with the same formula.
+    """
+    if measured_footprint_m and measured_footprint_m > 0.0:
+        return max(_MIN_INSTANCE_EXTENT, measured_footprint_m * scale * 0.5)
+    return max(_MIN_INSTANCE_EXTENT, scale * 0.6)
+
+
+def instance_min_spacing(scale: float,
+                         measured_footprint_m: Optional[float]) -> float:
+    """Smallest centre-to-centre gap between two instances of ONE group.
+
+    `_effective_spacing` never returns less than this. The final spatial
+    preflight's `instance_footprints` check rejects any pair closer than it.
+    """
+    if measured_footprint_m and measured_footprint_m > 0.0:
+        return measured_footprint_m * scale
+    return max(_MIN_INSTANCE_EXTENT, scale * 1.15)
+
+
+def _instance_body_radius(entity: EntitySpec,
+                          footprints: Optional[Mapping[str, float]]) -> float:
+    return instance_body_radius(entity.scale, (footprints or {}).get(entity.name))
+
+
 def _effective_spacing(entity: EntitySpec,
-                       footprints: Optional[dict[str, float]] = None) -> float:
+                       footprints: Optional[Mapping[str, float]] = None) -> float:
     """A primitive's own footprint is approximated by its authored `scale`
     (Unity's built-in cube/sphere/capsule primitives are ~1 unit before
     scaling — the same approximation EntitySpawner.cs.j2 uses for the
     `modelPrefab == null` fallback case). `spacing` is an authored MINIMUM;
     the footprint can only widen it, never shrink below what was authored.
+    It never drops under `instance_min_spacing` either: a 0.3-scale pebble
+    authored at spacing 0.2 still needs the 0.5 m floor the preflight holds
+    every group to.
 
     When `footprints` carries this entity's REAL model footprint (metres,
     measured by Unity and cached in the asset catalog — see
@@ -238,7 +283,7 @@ def _effective_spacing(entity: EntitySpec,
     Without it a 3 m model and a 0.2 m model are spaced identically, which is
     what packed fifteen giant heads into a single overlapping clump.
     """
-    base = max(entity.spacing, entity.scale * 1.15)
+    base = max(entity.spacing, instance_min_spacing(entity.scale, None))
     fp   = (footprints or {}).get(entity.name)
     if fp and fp > 0:
         # 1.15 is the clearance used for the primitive approximation. Measured
@@ -253,11 +298,23 @@ def _effective_spacing(entity: EntitySpec,
 
 
 def _footprint_radius(entity: EntitySpec, eff_spacing: float) -> float:
-    """Bounding radius of this group's own layout pattern; `radius` is an
-    authored minimum the computed footprint can only widen."""
+    """PATTERN radius of this group's own layout: how far its instance
+    CENTRES spread. This becomes `group_radius`, and `_bake_positions`' ring
+    branch draws the ring AT it. `radius` is an authored minimum the computed
+    pattern can only widen. Instance bodies reach further than this. Packing
+    reserves `_packing_radius` instead, which is a different number.
+
+    A ring's neighbours sit a CHORD `2r*sin(pi/n)` apart, never the arc
+    `2*pi*r/n`. The chord is always the shorter of the two. Sizing a ring by
+    arc length left a 2-instance stop of TunnelWalls 4.00 m apart, under the
+    4.60 m minimum. The chord form is never smaller than the old arc form
+    (sin x <= x), so a ring can only widen under it.
+    """
     n = max(1, entity.count)
     if entity.placement == "ring":
-        return max(entity.radius, n * eff_spacing / (2.0 * math.pi))
+        if n >= 2:
+            return max(entity.radius, eff_spacing / (2.0 * math.sin(math.pi / n)))
+        return max(entity.radius, eff_spacing / (2.0 * math.pi))
     if entity.placement == "line":
         return max(entity.radius, 0.5 * eff_spacing * (n - 1))
     if entity.placement == "grid":
@@ -270,6 +327,31 @@ def _footprint_radius(entity: EntitySpec, eff_spacing: float) -> float:
         return max(entity.radius, eff_spacing * math.sqrt(n / math.pi))
     # "single" — a modest footprint so it still participates in packing.
     return max(0.5, entity.scale * 0.6)
+
+
+def _packing_radius(entity: EntitySpec,
+                    footprints: Optional[Mapping[str, float]] = None) -> float:
+    """Radius of the circle a group RESERVES when it is packed: the farthest
+    baked instance centre from the group's anchor, plus one instance body.
+
+    `group_radius` (the pattern radius) only encloses instance centres. Packing
+    on it let a line of scale-10 helipads reserve 5.75 m while their bodies
+    reached 11.75 m. Two groups packed that way came out 6.50 m apart against
+    the 7.55 m their bodies need. The extent is measured from the real bake,
+    not a formula: every pattern `_bake_positions` emits is a pure translation
+    of its bake at the origin (the scatter RNG is seeded from the group, never
+    from where it lands). So this circle is exact for line, ring, grid, scatter
+    and single alike, including a grid's rows, which run one way from the
+    anchor rather than centred on it.
+
+    Reads `entity.group_radius` (a ring is drawn at it), so set that first.
+    Never written back: the ring's drawing radius stays the pattern radius.
+    """
+    eff = _effective_spacing(entity, footprints)
+    footprint = (footprints or {}).get(entity.name, 0.0) * entity.scale
+    pts = _bake_positions(entity, eff, 0.0, 0.0, footprint, 0.0)
+    extent = max((math.hypot(p[0], p[2]) for p in pts), default=0.0)
+    return extent + _instance_body_radius(entity, footprints)
 
 
 def _find_slot(r: float, placed: list[tuple[float, float, float]]) -> tuple[float, float]:
@@ -295,21 +377,27 @@ def _find_slot(r: float, placed: list[tuple[float, float, float]]) -> tuple[floa
 
 
 def _pack_groups(entities: list[EntitySpec],
-                  seed_circles: Sequence[tuple[float, float, float]] = ()
+                  seed_circles: Sequence[tuple[float, float, float]] = (),
+                  footprints: Optional[Mapping[str, float]] = None,
                   ) -> dict[str, tuple[float, float, float]]:
     """Deterministic non-overlapping circle packing over each group's
-    `group_radius`. Biggest footprints are placed first (stable tie-break by
+    `_packing_radius`, the circle around its instance BODIES, not just its
+    centres (`group_radius`). Biggest footprints are placed first (stable tie-break by
     name) so they claim central space — pure geometry, no RNG. `seed_circles`
     are treated as already-occupied space (e.g. a racetrack's pre-baked start
     grid) that these groups must avoid but which this pass never moves.
-    Returns name -> (cx, cz, r)."""
-    order = sorted(entities, key=lambda e: (-e.group_radius, e.name))
+    Returns name -> (cx, cz, r), where r is the RESERVED radius: callers that
+    publish it as occupied space keep later packers off these bodies too.
+    `group_radius` is left as the pattern radius it was."""
+    radii = {e.name: _packing_radius(e, footprints) for e in entities}
+    order = sorted(entities, key=lambda e: (-radii[e.name], e.name))
     placed: list[tuple[float, float, float]] = list(seed_circles)
     result: dict[str, tuple[float, float, float]] = {}
     for e in order:
-        cx, cz = _find_slot(e.group_radius, placed)
-        placed.append((cx, cz, e.group_radius))
-        result[e.name] = (cx, cz, e.group_radius)
+        r = radii[e.name]
+        cx, cz = _find_slot(r, placed)
+        placed.append((cx, cz, r))
+        result[e.name] = (cx, cz, r)
     return result
 
 
@@ -360,7 +448,8 @@ def _course_zones(schema: UnitySchema) -> list[RouteZone]:
 
 
 def _corridor_pack(packable: list[EntitySpec], primary: EntitySpec,
-                   seed_circles: list[tuple[float, float, float]]
+                   seed_circles: list[tuple[float, float, float]],
+                   footprints: Optional[Mapping[str, float]] = None,
                    ) -> dict[str, tuple[float, float, float]]:
     """Place groups in bands hugging the primary route corridor — the path is
     the GUIDE for where props go (the user's ask: props line the track, they
@@ -368,31 +457,35 @@ def _corridor_pack(packable: list[EntitySpec], primary: EntitySpec,
     evenly by arc length around the route and offset perpendicular to the
     OUTSIDE of the track, alternating sides; each is then pushed further out
     only as far as needed to clear the corridor and already-placed groups.
+    Packs on `_packing_radius` (bodies, not centres), same as `_pack_groups`.
     Deterministic; same (cx, cz, r) contract as `_pack_groups`."""
-    order = sorted(packable, key=lambda e: (-e.group_radius, e.name))
+    radii = {e.name: _packing_radius(e, footprints) for e in packable}
+    order = sorted(packable, key=lambda e: (-radii[e.name], e.name))
     anchors = _sample_polyline(primary.path_points, len(order))
     half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
     edge = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
     placed = list(seed_circles)
     result: dict[str, tuple[float, float, float]] = {}
     for i, e in enumerate(order):
+        r = radii[e.name]
         px, pz, nx, nz = anchors[i]
         side = 1.0 if i % 2 == 0 else -1.0
-        d = edge + e.group_radius
+        d = edge + r
         cx = cz = 0.0
         for _ in range(400):
             cx, cz = px + nx * side * d, pz + nz * side * d
-            if all(math.hypot(cx - ox, cz - oz) >= e.group_radius + orad + _GROUP_MARGIN
+            if all(math.hypot(cx - ox, cz - oz) >= r + orad + _GROUP_MARGIN
                    for ox, oz, orad in placed):
                 break
-            d += max(1.0, e.group_radius * 0.5)
-        placed.append((cx, cz, e.group_radius))
-        result[e.name] = (round(cx, 3), round(cz, 3), e.group_radius)
+            d += max(1.0, r * 0.5)
+        placed.append((cx, cz, r))
+        result[e.name] = (round(cx, 3), round(cz, 3), r)
     return result
 
 
 def _edge_distributed_pack(entity: EntitySpec, primary: EntitySpec,
-                           placed: list[tuple[float, float, float]]
+                           placed: list[tuple[float, float, float]],
+                           footprints: Optional[Mapping[str, float]] = None,
                            ) -> tuple[list[list[float]], list[float]]:
     """One instance per arc-length interval along the WHOLE route, offset
     outside the corridor edge and facing back toward the road — the
@@ -428,7 +521,7 @@ def _edge_distributed_pack(entity: EntitySpec, primary: EntitySpec,
     anchors = _sample_polyline(primary.path_points, n)
     half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
     edge = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
-    inst_r = max(0.5, entity.scale * 0.6)
+    inst_r = _instance_body_radius(entity, footprints)
     positions: list[list[float]] = []
     yaws: list[float] = []
     for i, (px, pz, nx, nz) in enumerate(anchors):
@@ -451,7 +544,8 @@ def _edge_distributed_pack(entity: EntitySpec, primary: EntitySpec,
 
 
 def _route_gate_pack(entity: EntitySpec, primary: EntitySpec,
-                     placed: list[tuple[float, float, float]]
+                     placed: list[tuple[float, float, float]],
+                     footprints: Optional[Mapping[str, float]] = None,
                      ) -> tuple[list[list[float]], list[float]]:
     """One instance per arc-length interval, centered ON the route and
     facing along it — the "route_gate" relationship (src/unity_layout_
@@ -489,7 +583,7 @@ def _route_gate_pack(entity: EntitySpec, primary: EntitySpec,
         # `_boundary_follow_pack` derives the normal FROM the tangent.
         anchors = [(px, pz, nz, -nx)
                   for px, pz, nx, nz in _sample_polyline(primary.path_points, n)]
-    inst_r = max(0.5, entity.scale * 0.6)
+    inst_r = _instance_body_radius(entity, footprints)
     positions: list[list[float]] = []
     yaws: list[float] = []
     for cx, cz, tx, tz in anchors:
@@ -503,7 +597,8 @@ def _route_gate_pack(entity: EntitySpec, primary: EntitySpec,
 
 
 def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
-                          placed: list[tuple[float, float, float]]
+                          placed: list[tuple[float, float, float]],
+                          footprints: Optional[Mapping[str, float]] = None,
                           ) -> tuple[list[list[float]], list[float]]:
     """Continuous chain hugging ONE side of the route corridor — the
     "boundary_follow" relationship (src/unity_layout_archetype.
@@ -550,10 +645,10 @@ def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
     if arc_length < 1e-9:
         _log.warning("[layout] boundary %r has a zero-length route; emitting one marker", entity.name)
         x, z, tx, tz = _route_sample(primary.path_points, 0.0)
-        placed.append((x, z, max(0.5, entity.scale * 0.6)))
+        placed.append((x, z, _instance_body_radius(entity, footprints)))
         return [[x, 0.0, z]], [math.degrees(math.atan2(tx, tz))]
     max_gap = entity.spacing if entity.spacing > 0.0 else 2.0
-    prefab_r = max(0.5, entity.scale * 0.6)
+    prefab_r = _instance_body_radius(entity, footprints)
     intervals = max(1, math.ceil(arc_length / max_gap))
     closed = primary.path_points[0][:3] == primary.path_points[-1][:3]
     count = intervals if closed else intervals + 1
@@ -584,30 +679,38 @@ def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
 _SCENERY_STOP_SIZE = 3
 
 
-def _stop_radius(stub: EntitySpec, eff_spacing: float, footprint: float) -> float:
-    """The clearance radius one distributed STOP actually needs.
+def _scenery_stop(entity: EntitySpec, stop_n: int,
+                  footprints: Optional[Mapping[str, float]]
+                  ) -> tuple[EntitySpec, float]:
+    """One distributed STOP of a scenery group: a stub holding `stop_n` of its
+    instances, and the radius that stop must RESERVE when it is placed.
 
-    Normally `_footprint_radius`. But for placement="scatter", `_bake_positions`
-    calls `_scatter_positions`, which samples its OWN region
-    (`region_r = sqrt(n) * r * 1.6`, independent of `_footprint_radius`'s own
-    scatter estimate `eff_spacing * sqrt(n / pi)`) — the two have never
-    agreed, by close to a factor of 3, a PRE-EXISTING gap this repo's single-
-    whole-group anchor had enough slack to never expose. A small STOP does
-    not have that slack, so stop sizing here takes whichever bound is
-    actually larger for scatter placement, rather than trusting
-    `_footprint_radius` alone the way the rest of this file still does for a
-    single group's own group_radius.
+    The stub's own `radius` scales DOWN from the group's authored `radius` by
+    its share of the instances. The authored value described the spread of the
+    whole group, not of one stop holding a fraction of it, and using it
+    unscaled would push every stop needlessly far out.
+
+    The stub carries TWO different radii. `group_radius` is the pattern radius
+    (`_footprint_radius`): `_bake_positions`' ring branch draws the ring AT
+    it, so it must be the STOP's own and must never be widened. If the stub
+    kept the ORIGINAL full-group value, a ring would draw at that radius and
+    could swing instances back toward the scene origin, wherever this stop
+    landed. The returned radius is the packing radius (`_packing_radius`):
+    the stop's baked extent plus one instance body. That is what keeps two
+    stops, of this group or any other, from putting bodies inside each other.
+    It also replaces the scatter region estimate stops used to need. The
+    extent is measured from the real bake, so it never has to be estimated.
     """
-    r = _footprint_radius(stub, eff_spacing)
-    if stub.placement == "scatter":
-        n = max(1, stub.count)
-        scatter_r = eff_spacing if footprint <= 0.0 else max(footprint, eff_spacing * 0.5)
-        r = max(r, math.sqrt(n) * scatter_r * 1.6)
-    return r
+    n = max(1, entity.count)
+    stub = entity.model_copy(update={
+        "count": stop_n, "radius": entity.radius * stop_n / n,
+    })
+    stub.group_radius = _footprint_radius(stub, _effective_spacing(stub, footprints))
+    return stub, _packing_radius(stub, footprints)
 
 
 def _scenery_distributed_pack(entity: EntitySpec, primary: EntitySpec,
-                              footprints: Optional[dict[str, float]],
+                              footprints: Optional[Mapping[str, float]],
                               placed: list[tuple[float, float, float]]
                               ) -> list[list[float]]:
     """Spread a decorative/scenery group across multiple STOPS along the
@@ -649,22 +752,9 @@ def _scenery_distributed_pack(entity: EntitySpec, primary: EntitySpec,
 
     positions: list[list[float]] = []
     for i, ((px, pz, nx, nz), stop_n) in enumerate(zip(anchors, stop_counts)):
-        # A stop's own radius scales DOWN from the group's authored `radius`
-        # by its share of the instances -- the authored value described the
-        # spread of the whole group, not of a single stop holding a fraction
-        # of it, and using it unscaled would push every stop needlessly far
-        # from the route.
-        stub = entity.model_copy(update={
-            "count": stop_n, "radius": entity.radius * stop_n / n,
-        })
-        stop_r = _stop_radius(stub, eff_spacing, footprint)
-        # _bake_positions' ring/line/grid branches read `group_radius`, NOT
-        # `radius` -- the stub must carry the STOP's own footprint there too,
-        # or a ring/line pattern draws itself at the ORIGINAL full-group
-        # radius (set earlier on `entity` for the whole, unsliced count) and
-        # can swing instances back toward the scene origin regardless of
-        # where this stop's own anchor landed.
-        stub.group_radius = stop_r
+        # Pattern radius on the stub, body-inclusive packing radius here --
+        # see _scenery_stop.
+        stub, stop_r = _scenery_stop(entity, stop_n, footprints)
         side = 1.0 if i % 2 == 0 else -1.0
         d = edge + stop_r
         cx = cz = 0.0
@@ -680,7 +770,7 @@ def _scenery_distributed_pack(entity: EntitySpec, primary: EntitySpec,
 
 
 def _scenery_scatter_pack(entity: EntitySpec,
-                          footprints: Optional[dict[str, float]],
+                          footprints: Optional[Mapping[str, float]],
                           placed: list[tuple[float, float, float]]
                           ) -> list[list[float]]:
     """Spread a decorative/scenery group across multiple STOPS around the
@@ -713,13 +803,9 @@ def _scenery_scatter_pack(entity: EntitySpec,
 
     positions: list[list[float]] = []
     for stop_n in stop_counts:
-        stub = entity.model_copy(update={
-            "count": stop_n, "radius": entity.radius * stop_n / n,
-        })
-        stop_r = _stop_radius(stub, eff_spacing, footprint)
-        # See _scenery_distributed_pack's matching comment: _bake_positions'
-        # ring/line/grid branches read `group_radius`, not `radius`.
-        stub.group_radius = stop_r
+        # Pattern radius on the stub, body-inclusive packing radius here --
+        # see _scenery_stop.
+        stub, stop_r = _scenery_stop(entity, stop_n, footprints)
         cx, cz = _find_slot(stop_r, placed)
         placed.append((cx, cz, stop_r))
         positions.extend(_bake_positions(stub, eff_spacing, cx, cz, footprint, 0.0))
@@ -768,8 +854,29 @@ def _measure_baked(entity: EntitySpec) -> tuple[float, float, float]:
     zs = [p[2] for p in entity.instance_positions]
     cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
     spread = max((math.hypot(x - cx, z - cz) for x, z in zip(xs, zs)), default=0.0)
-    return cx, cz, spread + max(0.5, entity.scale * 0.6)
+    return cx, cz, spread + instance_body_radius(entity.scale, None)
 
+
+
+def _preplaced_circle(entity: EntitySpec,
+                      footprints: Optional[Mapping[str, float]] = None
+                      ) -> tuple[float, float, float]:
+    """Occupied circle for a group whose positions are already baked, as a
+    seed the packer must route around.
+
+    `group_radius` alone is not enough. When it came from `_measure_baked` it
+    already includes one body. When it is this module's OWN earlier output (the
+    final Step-5 pass re-runs over everything the first pass baked) it is only
+    the pattern radius, which encloses instance centres. A group added between
+    the two passes was then packed against those centres, into the bodies
+    around them. The circle grows to the farthest baked instance plus one body,
+    and never shrinks below the recorded `group_radius`.
+    """
+    cx, cz = float(entity.origin_offset[0]), float(entity.origin_offset[1])
+    reach = max((math.hypot(p[0] - cx, p[2] - cz) for p in entity.instance_positions),
+                default=0.0)
+    return cx, cz, max(entity.group_radius,
+                       reach + _instance_body_radius(entity, footprints))
 
 _BRIDSON_K = 30   # candidate points tried per active sample (standard Bridson default)
 
@@ -1170,7 +1277,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
     # ── Terminal plane ───────────────────────────────────────────────────────
     goal = pick_goal_entity(terminal)
     seed_circles: list[tuple[float, float, float]] = [
-        (e.origin_offset[0], e.origin_offset[1], e.group_radius) for e in preplaced
+        _preplaced_circle(e, footprints) for e in preplaced
     ]
     if goal is not None:
         goal.origin_offset = [0.0, 0.0]
@@ -1179,7 +1286,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
                             (footprints or {}).get(goal.name, 0.0) * goal.scale),
             surface_y)
         _set_elevation(goal, surface_y)
-        seed_circles.append((0.0, 0.0, goal.group_radius))
+        seed_circles.append((0.0, 0.0, _packing_radius(goal, footprints)))
     elif player is None:
         # No airborne player and no goal: the scene template's own Player still
         # stands at the terminal-plane origin, so keep the ArenaPlane spawn
@@ -1190,7 +1297,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
 
     others = [e for e in terminal if e is not goal]
     if others:
-        slots = _pack_groups(others, seed_circles)
+        slots = _pack_groups(others, seed_circles, footprints)
         for e in others:
             cx, cz, _r = slots[e.name]
             e.origin_offset = [round(cx, 3), round(cz, 3)]
@@ -1504,12 +1611,11 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
                                                 _SPAWN_CLEARANCE_DEFAULT)),
             (0.0, 0.0, half_width),      # the wall's own ground footprint
         ]
-        seed_circles += [(e.origin_offset[0], e.origin_offset[1], e.group_radius)
-                         for e in preplaced]
+        seed_circles += [_preplaced_circle(e, footprints) for e in preplaced]
         background = [e for e in ground if any(word in e.name.lower()
                      for word in ("background", "backdrop", "valley", "skyline"))]
         ordinary_ground = [e for e in ground if e not in background]
-        slots = _pack_groups(ordinary_ground, seed_circles)
+        slots = _pack_groups(ordinary_ground, seed_circles, footprints)
         for e in ordinary_ground:
             cx, cz, _r = slots[e.name]
             e.origin_offset = [round(cx, 3), round(cz, 3)]
@@ -1600,8 +1706,7 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     reserved: list[tuple[float, float, float]] = [
         (_PLAYER_SPAWN_XZ[0], _PLAYER_SPAWN_XZ[1], spawn_r)
     ]
-    reserved += [(e.origin_offset[0], e.origin_offset[1], e.group_radius)
-                 for e in preplaced]
+    reserved += [_preplaced_circle(e, footprints) for e in preplaced]
 
     # ── Player: mid-box, never on a boundary ─────────────────────────────────
     player_y = round(height * (_VOLUME_BAND_FLOOR + _VOLUME_BAND_CEIL) / 2.0, 3)
@@ -1659,7 +1764,7 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
         in_band = [e for e in interior if band_key(elevations[e.name]) == band]
         # Same band -> must not overlap in XZ. Different bands may share it:
         # they are already separated vertically, which is the whole point.
-        slots = _pack_groups(in_band, reserved)
+        slots = _pack_groups(in_band, reserved, footprints)
         for e in in_band:
             y = elevations[e.name]
             cx, cz, _r = slots[e.name]
@@ -1682,7 +1787,7 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
 
     # ── Boundary plane ───────────────────────────────────────────────────────
     if on_boundary:
-        slots = _pack_groups(on_boundary, reserved)
+        slots = _pack_groups(on_boundary, reserved, footprints)
         for e in on_boundary:
             cx, cz, _r = slots[e.name]
             e.origin_offset = [round(cx, 3), round(cz, 3)]
@@ -2307,7 +2412,7 @@ def _layout_topdown_board(
     for e in layoutable:
         if id(e) not in anchors or e.instance_positions:
             if e.instance_positions:
-                occupied.append((e.origin_offset[0], e.origin_offset[1], e.group_radius))
+                occupied.append(_preplaced_circle(e, footprints))
             continue
         cx, cz, role = anchors[id(e)]
         e.origin_offset = [round(cx, 3), round(cz, 3)]
@@ -2327,11 +2432,13 @@ def _layout_topdown_board(
         anchored_names.append(f"{e.name} ({role})")
 
     fallback = [e for e in packable if id(e) not in anchors]
-    slots = _pack_groups(fallback, occupied)
+    slots = _pack_groups(fallback, occupied, footprints)
     for e in fallback:
-        cx, cz, radius = slots[e.name]
+        cx, cz, _reserved = slots[e.name]
         e.origin_offset = [round(cx, 3), round(cz, 3)]
-        e.group_radius = round(radius, 3)
+        # The slot radius is the RESERVED (body-inclusive) circle. A ring is
+        # drawn at `group_radius`, which stays this group's pattern radius.
+        e.group_radius = round(e.group_radius, 3)
         e.instance_positions = _bake_positions(
             e, _effective_spacing(e, footprints), cx, cz,
             (footprints or {}).get(e.name, 0.0) * e.scale, 0.0)
@@ -2390,7 +2497,7 @@ def _layout_arena_plane(
         if e.group_radius <= 0.0:
             cx, cz, r = _measure_baked(e)
             e.origin_offset, e.group_radius = [round(cx, 3), round(cz, 3)], round(r, 3)
-        seed_circles.append((e.origin_offset[0], e.origin_offset[1], e.group_radius))
+        seed_circles.append(_preplaced_circle(e, footprints))
 
     for e in packable:
         e.group_radius = _footprint_radius(e, _effective_spacing(e, footprints))
@@ -2463,7 +2570,7 @@ def _layout_arena_plane(
                         if e not in _trackside and e not in scenery_entities]
 
     if primary is not None and cluster_packable:
-        slots = _corridor_pack(cluster_packable, primary, seed_circles)
+        slots = _corridor_pack(cluster_packable, primary, seed_circles, footprints)
     elif primitive in VOLUME_PRIMITIVES and cluster_packable:
         # A volume is packed one ALTITUDE BAND at a time: groups in different
         # bands are already separated in Y, so forcing them apart in XZ too
@@ -2475,9 +2582,9 @@ def _layout_arena_plane(
                             for e in cluster_packable}):
             in_band = [e for e in cluster_packable
                        if band_key(elevations.get(e.name, 0.0)) == band]
-            slots.update(_pack_groups(in_band, seed_circles))
+            slots.update(_pack_groups(in_band, seed_circles, footprints))
     else:
-        slots = _pack_groups(cluster_packable, seed_circles)
+        slots = _pack_groups(cluster_packable, seed_circles, footprints)
 
     # `_scenery_scatter_pack` and the route-aware scenery packer run after
     # this cluster pass and read the same occupied-space list.  The cluster
@@ -2498,7 +2605,7 @@ def _layout_arena_plane(
     assert primary is not None or not gate_entities
     for e in gate_entities:
         assert primary is not None  # guaranteed by the assert above
-        positions, yaws = _route_gate_pack(e, primary, seed_circles)
+        positions, yaws = _route_gate_pack(e, primary, seed_circles, footprints)
         e.instance_positions = positions
         e.instance_yaws = yaws
         xs = [p[0] for p in positions]
@@ -2522,7 +2629,7 @@ def _layout_arena_plane(
     assert primary is not None or not edge_entities
     for e in edge_entities:
         assert primary is not None  # guaranteed by the assert above
-        positions, yaws = _edge_distributed_pack(e, primary, seed_circles)
+        positions, yaws = _edge_distributed_pack(e, primary, seed_circles, footprints)
         e.instance_positions = positions
         e.instance_yaws = yaws
         xs = [p[0] for p in positions]
@@ -2546,7 +2653,7 @@ def _layout_arena_plane(
     assert primary is not None or not boundary_entities
     for e in boundary_entities:
         assert primary is not None  # guaranteed by the assert above
-        positions, yaws = _boundary_follow_pack(e, primary, seed_circles)
+        positions, yaws = _boundary_follow_pack(e, primary, seed_circles, footprints)
         e.instance_positions = positions
         e.instance_yaws = yaws
         xs = [p[0] for p in positions]
